@@ -14,7 +14,8 @@ How
       2. Account, per provider — alert when the "active" credential in the serving provider's pool
          (lowest priority that is not exhausted/dead, read from <HERMES_HOME>/auth.json) changes.
          This is global state, so it alerts once per change regardless of platform.
-    The first observation is a baseline and never alerts. Posting runs on a daemon thread.
+    The first observation is a baseline and never alerts. Posting runs on a short-lived non-daemon
+thread, so it doesn't block the turn but a one-shot process still waits for it (10 s timeout).
 
 Config (<HERMES_HOME>/.env)
     SLACK_BOT_TOKEN, SLACK_HOME_CHANNEL   where alerts go (already set by `hermes gateway setup`)
@@ -116,7 +117,9 @@ def _post(text: str) -> None:
 
 
 def _send(text: str) -> None:
-    threading.Thread(target=_post, args=(text,), daemon=True).start()
+    # Non-daemon: a one-shot CLI/cron process waits for the post (bounded by the 10 s timeout)
+    # instead of dropping it when the interpreter exits.
+    threading.Thread(target=_post, args=(text,), daemon=False, name="fallback-alert-post").start()
 
 
 def _on_post_api_request(session_id="", platform="", model="", provider="", **_kw):

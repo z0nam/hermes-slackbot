@@ -49,7 +49,8 @@ def namespace(manifest: dict, ident: str) -> dict:
     url = next((c.get("url") for c in old if c.get("url")), "https://hermes-agent.local/slack/commands")
     feats["slash_commands"] = [{
         "command": f"/hermes-{ident}",
-        "description": f"{name} — subcommand (new, stop, model, help …) or a question",
+        # Fixed text, independent of the id length (Slack caps slash-command descriptions).
+        "description": "Subcommand (new, stop, model, help …) or a question",
         "usage_hint": "[subcommand] [args] | question",
         "should_escape": False,
         "url": url,
