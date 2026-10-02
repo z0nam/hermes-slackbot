@@ -1,0 +1,4 @@
+name: slack-namespace
+version: "1.1.0"
+description: "Namespaced slash command for a personal Hermes Slack app — /hermes-<id> <subcommand> is handed to the built-in /hermes handling, so several personal Hermes apps can share one workspace without colliding"
+author: "Namun Cho"

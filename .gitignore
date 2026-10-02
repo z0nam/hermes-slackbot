@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+slack-manifest*.json
+.DS_Store

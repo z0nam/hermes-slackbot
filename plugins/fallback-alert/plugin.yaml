@@ -1,0 +1,6 @@
+name: fallback-alert
+version: "1.1.0"
+description: "Post a one-time Slack alert when the model falls back away from your primary provider (and when it recovers), and when the active account in a credential pool changes"
+author: "Namun Cho"
+provides_hooks:
+  - post_api_request

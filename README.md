@@ -1,22 +1,96 @@
 # hermes-slackbot
 
 > Kit for running your **personal [Hermes Agent](https://github.com/NousResearch/hermes-agent) as a Slack bot** in a workspace where other people run theirs too.
-> Not affiliated with Nous Research.
+> Independent project — not affiliated with Nous Research.
 
-한 슬랙 워크스페이스에서 여러 사람이 각자 자기 Hermes를 개인 봇으로 붙여 쓸 때 필요한 것들을 모은 키트입니다.
+[한국어 안내](docs/ko.md)
 
-## 왜 필요한가
+## The problem
 
-Hermes 기본 안내(`hermes slack manifest --agent-view --write`)대로 슬랙 앱을 만들면:
+Following the stock setup (`hermes slack manifest --agent-view --write`) gives every personal bot:
 
-- 슬래시 명령 50여 개(`/hermes`, `/help`, `/new`, `/model` …)가 **전역으로** 등록됩니다. 같은 워크스페이스에 두 번째 사람이 설치하는 순간 명령이 겹치고, 나중에 설치한 앱이 명령을 가져갑니다.
-- 앱 이름이 기본값 `Hermes`라서, 여러 개가 생기면 누구 봇인지 구분이 안 되고 공용 봇으로 오해받습니다.
+- **~50 workspace-wide slash commands** (`/hermes`, `/help`, `/new`, `/model`, …). The second person to install collides with the first, and the most recently installed app takes the commands over. Slack shows the admin a "this app's commands now override …" notice.
+- **The same name, `Hermes`.** With several of them nobody can tell whose bot is whose, and people mistake a personal agent — which runs with its owner's files, shell and accounts — for a shared one.
 
-이 키트는 사람마다 **`Hermes-<아이디>` 이름 + `/hermes-<아이디>` 명령 하나**로 정리해서 서로 겹치지 않게 합니다.
+## What this kit does
 
-## 상태
+Each person gets **`Hermes-<id>`** as the app name and **one** command, **`/hermes-<id>`**, used with subcommands:
 
-초기 구성 중입니다. 내용은 PR로 들어옵니다.
+```
+/hermes-alice new            → /new
+/hermes-alice model opus     → /model opus
+/hermes-alice what's next?   → a normal message
+/hermes-alice                → /help
+```
+
+| Piece | What it is |
+|---|---|
+| `scripts/make_manifest.py` | Builds the Slack app manifest from **your installed Hermes** (scopes/events stay in sync) and swaps in the per-user name + single command. |
+| `plugins/slack-namespace` | Hermes plugin that answers `/hermes-<id>` and hands it to Hermes' built-in `/hermes` handling. Required — without it Slack says *"app did not respond"*. |
+| `plugins/fallback-alert` | Optional. One Slack message to your home channel when Hermes falls back to another model/provider (and when it recovers), or when a credential pool moves to its next account. |
+| `scripts/install.py` | Copies (or links) the plugins into your Hermes, enables them, sets `HERMES_SLACK_SLASH`. |
+
+Everything is stdlib Python and works on **Windows, macOS and Linux** — paths are resolved through `hermes config env-path`, never hardcoded.
+
+## Setup
+
+Prerequisites: Hermes Agent installed (`hermes --version`), Python 3, a model configured.
+
+```sh
+git clone https://github.com/z0nam/hermes-slackbot
+cd hermes-slackbot
+
+# 1. Manifest (pick a short lowercase id — your Slack handle works)
+python scripts/make_manifest.py alice --out slack-manifest.json
+```
+
+2. **Create the Slack app** — <https://api.slack.com/apps> → *Create New App* → *From a manifest* → choose the workspace → paste `slack-manifest.json` → *Create* → *Install to Workspace*.
+   - *Basic Information* → *App-Level Tokens* → generate one with `connections:write` → copy the **`xapp-…`** token.
+   - *OAuth & Permissions* → copy the **Bot User OAuth Token `xoxb-…`**.
+   - Your **Member ID**: in Slack, your profile → ⋮ → *Copy member ID* (`U…`).
+
+```sh
+# 3. Tokens + allow only yourself  (choose Slack; paste xoxb, xapp, your U… id)
+hermes gateway setup
+
+# 4. Plugins
+python scripts/install.py alice
+
+# 5. Run it as a service and restart
+hermes gateway install
+hermes gateway restart
+```
+
+6. In Slack: DM the bot, then try `/hermes-alice help`.
+
+**Lock it to yourself.** Your Hermes acts with your machine's files, shell and logged-in accounts. Keep `SLACK_ALLOWED_USERS` to your own Member ID.
+
+### Already have a stock Hermes app?
+
+Re-run step 1 with your id, then in your app: *Features → App Manifest → Edit*, replace the contents, *Save*, reinstall when prompted. Then steps 4–5. If the name doesn't change, also check *Basic Information → Display Information* and *App Home*.
+
+## fallback-alert options
+
+Set in your Hermes `.env` (`hermes config env-path` shows where):
+
+```
+FALLBACK_ALERT_ACCOUNT_NAMES=personal=Personal,anthropic-oauth-2=Work
+```
+
+Labels come from `hermes auth list`. Alerts go to `SLACK_HOME_CHANNEL` (set by `hermes gateway setup` or `/sethome`). Fallback alerts are skipped for Slack sessions, since their thread already shows Hermes' own notice; account-switch alerts are global.
+
+## Notes and limits
+
+- Tested against Hermes Agent 2026-10 (Socket Mode, Agent view). The plugin relies on the Slack adapter's `_handle_slash_command`; if a Hermes update renames it, the plugin logs a warning instead of breaking the gateway.
+- One app per person is still Hermes' supported model for self-hosted bots. The longer-term answer for organisations is [Hermes Relay](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/relay) (one shared bot fronting many agents), which is experimental today.
+
+## Development
+
+```sh
+python -m unittest discover -s tests                                   # stdlib only
+HERMES_AGENT_DIR=~/.hermes/hermes-agent ~/.hermes/hermes-agent/venv/bin/python -m unittest discover -s tests
+python scripts/install.py <id> --link                                  # live-edit the plugins
+```
 
 ## License
 
