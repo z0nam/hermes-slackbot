@@ -6,7 +6,7 @@
 - **붙여 넣으면 안 되는 곳:** 슬랙의 Hermes 봇 DM. 중간에 봇을 재시작하기 때문에 대화가 끊깁니다.
 - **사람이 직접 하는 것:** 슬랙 앱 설정 화면에서 복사·붙여넣기, 토큰 복사, 재설치 버튼 누르기
 
-새로 설치하는 경우와, 기본 방식(`/hermes` 등 명령 수십 개)으로 이미 만든 앱을 고치는 경우 모두 이 프롬프트 하나로 됩니다. Hermes가 1단계에서 상태를 보고 갈래를 나눕니다.
+새로 설치하는 경우와, 기본 방식(`/hermes` 등 명령 수십 개)으로 이미 만든 앱을 고치는 경우 모두 이 프롬프트 하나로 됩니다. Hermes가 1단계에서 "슬랙 앱이 이미 있느냐"를 물어보고 그 답으로 갈래를 나눕니다.
 
 ```text
 내 PC의 Hermes를 슬랙 개인 봇으로 연결(또는 기존 연결을 정리)해 줘. 이전 대화에 다른 안내가 있었다면 무시하고 아래 순서만 따른다.
@@ -23,7 +23,7 @@
    - `hermes --version`, `hermes gateway status`, `hermes plugins list`
    - .env 에서 SLACK_BOT_TOKEN·SLACK_APP_TOKEN 은 있음/없음만, SLACK_ALLOWED_USERS·SLACK_HOME_CHANNEL·HERMES_SLACK_SLASH 는 값까지 보여 줘라(비밀값 아님).
    - `git --version`, 파이썬 버전 확인.
-   - 토큰이 이미 있으면 "기존 앱 정리", 없으면 "새로 만들기"로 판단해서 알려 줘라.
+   - 그다음 나에게 직접 물어봐라: "이 워크스페이스에 내 Hermes 슬랙 앱이 이미 있나요? (https://api.slack.com/apps 의 Your Apps 목록에서 확인)". 갈래는 이 답으로 정한다 — 있으면 [기존 앱 정리], 없으면 [새로 만들기]. 토큰이 있는지 없는지만 보고 판단하지 마라(앱은 만들었는데 아직 토큰을 안 넣었거나, 앱은 지웠는데 옛 토큰이 남아 있는 경우가 흔하다). 내 답과 토큰 상태가 엇갈리면 그 사실을 알려 줘라: 앱이 있는데 토큰이 없으면 5번 끝에 토큰 입력 단계를 추가하고, 앱이 없는데 토큰이 남아 있으면 새 앱을 만든 뒤 `hermes gateway setup` 으로 새 토큰으로 덮어쓰게 한다.
 
 2. 키트 받기: 홈 폴더 아래 hermes-slackbot 에 https://github.com/z0nam/hermes-slackbot 을 clone 한다. 이미 있으면 `git pull`. 그 폴더에서 `python -m unittest discover -s tests` 를 돌려 통과하는지 확인한다(1개 skip 은 정상).
 
@@ -44,6 +44,7 @@
    - "Agent view 로 바꾸면 되돌릴 수 없다"는 확인이 뜨면 진행, 재설치 안내가 뜨면 Install App → Reinstall to Workspace
    - Basic Information → Display Information 의 App name 이 Hermes-<ID> 로 바뀌었는지 확인, 안 바뀌었으면 직접 수정
    - SLACK_ALLOWED_USERS 가 내 멤버 ID 하나가 아니면 고치는 방법을 안내해라. 이 봇은 내 PC의 파일·셸 권한으로 움직이는 개인 에이전트라 나만 써야 한다.
+   - (1번에서 토큰이 없었던 경우) Basic Information → App-Level Tokens 에서 xapp- 토큰(scope: connections:write, 없으면 새로 생성), OAuth & Permissions 에서 xoxb- 토큰을 복사한 뒤, 터미널에서 내가 직접 `hermes gateway setup` 을 실행해 입력하게 안내해라(토큰을 너에게 붙여 넣게 하지 마라).
 
 6. 서비스 등록·재시작: 게이트웨이가 서비스로 등록돼 있지 않으면 `hermes gateway install`, 그다음 `hermes gateway restart`. 이후 `<HERMES_HOME>/logs/gateway.log` 끝부분에서 다음 세 줄을 확인해라(토큰이 들어간 줄은 출력하지 말 것):
    - `slack-namespace: /hermes-<ID> -> /hermes handler registered`
