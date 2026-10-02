@@ -11,6 +11,8 @@ Hermes 기본 안내대로 슬랙 앱을 만들면 두 가지 문제가 생깁�
 
 이 키트로 설치하면 사람마다 앱 이름은 `Hermes-<아이디>`, 명령은 `/hermes-<아이디>` 하나가 됩니다.
 
+> **직접 하기 번거로우면** [Hermes에게 설치를 맡기는 프롬프트](hermes-prompt.ko.md)를 내 PC의 Hermes에 붙여 넣으세요. 아이디를 묻는 것부터 한 단계씩 진행합니다.
+
 ```
 /hermes-alice new            → 새 대화
 /hermes-alice model opus     → 모델 변경
