@@ -81,7 +81,7 @@ Labels come from `hermes auth list`. Alerts go to `SLACK_HOME_CHANNEL` (set by `
 
 ## Notes and limits
 
-- Tested against Hermes Agent 2026-10 (Socket Mode, Agent view). The plugin relies on the Slack adapter's `_handle_slash_command`; if a Hermes update renames it, the plugin logs a warning instead of breaking the gateway.
+- Tested against Hermes Agent 2026-10 (Socket Mode, Agent view) on macOS and native Windows 11 — two personal bots running side by side in one workspace, each with its own `/hermes-<id>`. The plugin relies on the Slack adapter's `_handle_slash_command`; if a Hermes update renames it, the plugin logs a warning instead of breaking the gateway.
 - One app per person is still Hermes' supported model for self-hosted bots. The longer-term answer for organisations is [Hermes Relay](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/relay) (one shared bot fronting many agents), which is experimental today.
 
 ## Development
