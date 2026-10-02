@@ -143,6 +143,31 @@ class Manifest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 mk.namespace(self.BASE, bad)
 
+    def test_description_short_for_any_id(self):
+        for ident in ["a", "x" * 21]:
+            cmd = mk.namespace(self.BASE, ident)["features"]["slash_commands"][0]
+            self.assertLessEqual(len(cmd["description"]), 75)
+            self.assertLessEqual(len(cmd["command"]), 32)
+
+
+class AlertDelivery(unittest.TestCase):
+    def test_post_survives_one_shot_exit(self):
+        """A one-shot process exiting right after the hook must still deliver the alert."""
+        import subprocess
+        import textwrap
+        code = textwrap.dedent(f"""
+            import importlib.util, time
+            spec = importlib.util.spec_from_file_location("fa", {str(ROOT / "plugins/fallback-alert/__init__.py")!r})
+            fa = importlib.util.module_from_spec(spec); spec.loader.exec_module(fa)
+            def slow_post(text):
+                time.sleep(0.5)
+                print("DELIVERED", flush=True)
+            fa._post = slow_post
+            fa._send("x")
+        """)
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        self.assertIn("DELIVERED", out.stdout)
+
 
 class Install(unittest.TestCase):
     def test_set_env_upserts(self):
