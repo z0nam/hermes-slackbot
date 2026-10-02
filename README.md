@@ -3,7 +3,7 @@
 > Kit for running your **personal [Hermes Agent](https://github.com/NousResearch/hermes-agent) as a Slack bot** in a workspace where other people run theirs too.
 > Independent project — not affiliated with Nous Research.
 
-[한국어 안내](docs/ko.md)
+[한국어 안내](docs/ko.md) · [Hermes에게 설치를 맡기는 프롬프트 (한국어)](docs/hermes-prompt.ko.md)
 
 ## The problem
 
