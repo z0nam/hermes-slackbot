@@ -28,9 +28,10 @@ Each person gets **`Hermes-<id>`** as the app name and **one** command, **`/herm
 | `scripts/make_manifest.py` | Builds the Slack app manifest from **your installed Hermes** (scopes/events stay in sync) and swaps in the per-user name + single command. |
 | `plugins/slack-namespace` | Hermes plugin that answers `/hermes-<id>` and hands it to Hermes' built-in `/hermes` handling. Required — without it Slack says *"app did not respond"*. |
 | `plugins/fallback-alert` | Optional. One Slack message to your home channel when Hermes falls back to another model/provider (and when it recovers), or when a credential pool moves to its next account. |
+| `plugins/slack-tools` | Optional, separately installed. Browser-free reads and human-confirmed writes via a configurable **user-token** `sapi` CLI. [Setup and safety](docs/slack-tools.md). |
 | `scripts/install.py` | Copies (or links) the plugins into your Hermes, enables them, sets `HERMES_SLACK_SLASH`. |
 
-Everything is stdlib Python and works on **Windows, macOS and Linux** — paths are resolved through `hermes config env-path`, never hardcoded.
+The namespace/alert kit is stdlib Python and works on **Windows, macOS and Linux** — paths are resolved through `hermes config env-path`, never hardcoded. The optional Slack tools are also stdlib-only but require a platform-compatible `sapi` executable; their new Windows path is not yet host-tested.
 
 ## Setup
 
@@ -68,6 +69,10 @@ hermes gateway restart
 ### Already have a stock Hermes app?
 
 Re-run step 1 with your id, then in your app: *Features → App Manifest → Edit*, replace the contents, *Save*, reinstall when prompted. Then steps 4–5. If the name doesn't change, also check *Basic Information → Display Information* and *App Home*.
+
+## Optional Slack read/write tools
+
+Existing bot users can install only the new plugin with `python scripts/install.py --tools-only`, preserving their namespace and alert setup. Configure the exact workspace host and executable, then enable the `slack` platform toolset as described in [Slack tools](docs/slack-tools.md). Writes post as the human token owner, require a separate real approval for every action, and are read-back verified. Installation does not restart the gateway. Live API validation is intentionally separate from offline fake-executable tests.
 
 ## fallback-alert options
 

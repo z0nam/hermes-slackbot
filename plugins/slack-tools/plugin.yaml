@@ -1,0 +1,4 @@
+name: slack-tools
+version: "0.1.0"
+description: "Constrained Slack reads and human-confirmed writes through a configurable sapi user-token CLI"
+author: "Hermes contributors"
