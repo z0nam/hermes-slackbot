@@ -48,18 +48,21 @@ def set_env(env_path: Path, key: str, value: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("id", help="the same id you used for make_manifest.py")
+    ap.add_argument("id", nargs="?", help="the same id you used for make_manifest.py")
     ap.add_argument("--link", action="store_true", help="symlink plugins instead of copying")
     ap.add_argument("--no-alert", action="store_true", help="don't install fallback-alert")
+    ap.add_argument("--tools-only", action="store_true", help="install only slack-tools; leave slash namespace and alerts untouched")
     a = ap.parse_args()
-    ident = a.id.strip().lower()
+    if not a.tools_only and not a.id:
+        ap.error("id is required unless --tools-only is used")
+    ident = a.id.strip().lower() if a.id else ""
 
     env_path = Path(run("config", "env-path"))
     home = env_path.parent
     dest_root = home / "plugins"
     dest_root.mkdir(parents=True, exist_ok=True)
 
-    for name in PLUGINS:
+    for name in (["slack-tools"] if a.tools_only else PLUGINS):
         if name == "fallback-alert" and a.no_alert:
             continue
         src, dest = KIT / "plugins" / name, dest_root / name
@@ -74,6 +77,9 @@ def main() -> None:
         run("plugins", "enable", name)
         print(f"  {'linked' if a.link else 'copied'} + enabled  {name}")
 
+    if a.tools_only:
+        print("Next: configure slack-tools settings, then hermes tools enable slack --platform slack. See docs/slack-tools.md. Gateway not restarted.")
+        return
     set_env(env_path, "HERMES_SLACK_SLASH", f"hermes-{ident}")
     print(f"  set HERMES_SLACK_SLASH=hermes-{ident} in {env_path}")
     print("\nNext: hermes gateway restart   (then try  /hermes-%s help  in Slack)" % ident)
