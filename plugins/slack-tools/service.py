@@ -34,7 +34,7 @@ class SlackService:
         if action not in ('post', 'update', 'delete', 'open_dm'):
             raise ValueError('Unsupported write action')
         if action == 'open_dm':
-            validate(user, r'U[A-Z0-9]{8,}', 'user ID')
+            validate(user, r'[UW][A-Z0-9]{8,}', 'user ID')
             if channel or text or ts or thread_ts:
                 raise ValueError('open_dm accepts only user')
         else:

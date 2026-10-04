@@ -124,6 +124,18 @@ p.write_text(json.dumps(r))
         self.assertEqual(out['channel'], 'D0123456789')
         self.assertEqual([x[0] for x in self.calls()], ['conversations.open', 'conversations.info'])
 
+    def test_dm_open_accepts_enterprise_user_id(self):
+        user = 'W0123456789'
+        c = self.client([{'ok': True, 'channel': {'id': 'D0123456789'}},
+                         {'ok': True, 'channel': {'id': 'D0123456789', 'is_im': True, 'user': user}}])
+        previews = []
+        out = c.write('open_dm', user=user, approve=lambda p: previews.append(p) or True)
+        self.assertTrue(out['verified'])
+        self.assertEqual(out['user'], user)
+        self.assertIn(user, previews[0])
+        self.assertIn('users=' + user, self.calls()[0])
+        self.assertEqual([x[0] for x in self.calls()], ['conversations.open', 'conversations.info'])
+
     def test_invalid_write_arguments_fail_before_confirmation(self):
         c = self.client([])
         for args in [dict(action='files.delete', channel='C0123456789'), dict(action='post', channel='C1', text='x'),
