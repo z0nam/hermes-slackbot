@@ -1,0 +1,4 @@
+name: slack-forwarded
+version: "1.0.0"
+description: "Opt-in Slack shared-message attachment quotes, without source-channel fetching or extra scopes"
+author: "Namun Cho"
