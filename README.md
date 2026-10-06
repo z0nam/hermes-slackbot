@@ -29,6 +29,7 @@ Each person gets **`Hermes-<id>`** as the app name and **one** command, **`/herm
 | `plugins/slack-namespace` | Hermes plugin that answers `/hermes-<id>` and hands it to Hermes' built-in `/hermes` handling. Required — without it Slack says *"app did not respond"*. |
 | `plugins/fallback-alert` | Optional. One Slack message to your home channel when Hermes falls back to another model/provider (and when it recovers), or when a credential pool moves to its next account. |
 | `plugins/slack-tools` | Optional, separately installed. Browser-free reads and human-confirmed writes via a configurable **user-token** `sapi` CLI. [Setup and safety](docs/slack-tools.md). |
+| `plugins/slack-forwarded` | Optional, opt-in. Makes Slack **Forward message** attachments visible as bounded, untrusted quotes without fetching the source channel. [Setup and limits](docs/slack-forwarded.md). |
 | `scripts/install.py` | Copies (or links) the plugins into your Hermes, enables them, sets `HERMES_SLACK_SLASH`. |
 
 The namespace/alert kit is stdlib Python and works on **Windows, macOS and Linux** — paths are resolved through `hermes config env-path`, never hardcoded. The optional Slack tools are also stdlib-only but require a platform-compatible `sapi` executable; their new Windows path is not yet host-tested.
@@ -73,6 +74,10 @@ Re-run step 1 with your id, then in your app: *Features → App Manifest → Edi
 ## Optional Slack read/write tools
 
 Existing bot users can install only the new plugin with `python scripts/install.py --tools-only`, preserving their namespace and alert setup. Configure the exact workspace host and executable, then enable the `slack` platform toolset as described in [Slack tools](docs/slack-tools.md). Writes post as the human token owner, require a separate real approval for every action, and are read-back verified. Installation does not restart the gateway. Live API validation is intentionally separate from offline fake-executable tests.
+
+## Optional forwarded-message support
+
+`python scripts/install.py --forwarded-only` installs only `slack-forwarded`, preserving existing plugins and `HERMES_SLACK_SLASH`. For a new installation, use `python scripts/install.py alice --with-forwarded`. The installer never restarts the gateway. The plugin renders only attachments explicitly marked both `is_share=true` and `is_msg_unfurl=true`; ordinary message-link previews remain unchanged. See [setup, rollback and compatibility limits](docs/slack-forwarded.md).
 
 ## fallback-alert options
 

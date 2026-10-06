@@ -4,6 +4,8 @@
     python install.py <id>               # copy plugins, set HERMES_SLACK_SLASH=hermes-<id>, enable
     python install.py <id> --link        # symlink instead of copy (for kit developers)
     python install.py <id> --no-alert    # skip the fallback-alert plugin
+    python install.py --forwarded-only   # install only forwarded-message support
+    python install.py <id> --with-forwarded  # opt in during a full kit install
 
 Resolves HERMES_HOME via `hermes config env-path`, so profiles and Windows paths
 (%LOCALAPPDATA%\\hermes) work without hardcoding. Restart the gateway afterwards:
@@ -51,10 +53,15 @@ def main() -> None:
     ap.add_argument("id", nargs="?", help="the same id you used for make_manifest.py")
     ap.add_argument("--link", action="store_true", help="symlink plugins instead of copying")
     ap.add_argument("--no-alert", action="store_true", help="don't install fallback-alert")
-    ap.add_argument("--tools-only", action="store_true", help="install only slack-tools; leave slash namespace and alerts untouched")
+    only = ap.add_mutually_exclusive_group()
+    only.add_argument("--tools-only", action="store_true", help="install only slack-tools; leave slash namespace and alerts untouched")
+    only.add_argument("--forwarded-only", action="store_true", help="install only slack-forwarded; preserve existing plugins and namespace")
+    ap.add_argument("--with-forwarded", action="store_true", help="also install optional slack-forwarded with the namespace/alert kit")
     a = ap.parse_args()
-    if not a.tools_only and not a.id:
-        ap.error("id is required unless --tools-only is used")
+    if not (a.tools_only or a.forwarded_only) and not a.id:
+        ap.error("id is required unless --tools-only or --forwarded-only is used")
+    if a.with_forwarded and (a.tools_only or a.forwarded_only):
+        ap.error("--with-forwarded cannot be combined with an only mode")
     ident = a.id.strip().lower() if a.id else ""
 
     env_path = Path(run("config", "env-path"))
@@ -62,7 +69,9 @@ def main() -> None:
     dest_root = home / "plugins"
     dest_root.mkdir(parents=True, exist_ok=True)
 
-    for name in (["slack-tools"] if a.tools_only else PLUGINS):
+    names = (["slack-tools"] if a.tools_only else ["slack-forwarded"] if a.forwarded_only
+             else PLUGINS + (["slack-forwarded"] if a.with_forwarded else []))
+    for name in names:
         if name == "fallback-alert" and a.no_alert:
             continue
         src, dest = KIT / "plugins" / name, dest_root / name
@@ -77,6 +86,9 @@ def main() -> None:
         run("plugins", "enable", name)
         print(f"  {'linked' if a.link else 'copied'} + enabled  {name}")
 
+    if a.forwarded_only:
+        print("Next: restart the gateway when ready to load slack-forwarded. Gateway not restarted; namespace unchanged.")
+        return
     if a.tools_only:
         print("Next: configure slack-tools settings, then hermes tools enable slack --platform slack. See docs/slack-tools.md. Gateway not restarted.")
         return

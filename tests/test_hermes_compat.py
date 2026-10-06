@@ -56,3 +56,50 @@ print(json.dumps({'registered': [e.name for e in entries], 'enabled_note': True,
             proof = json.loads(result.stdout.splitlines()[-1])
             self.assertEqual(proof['registered'], ['sapi_slack_read', 'sapi_slack_write'])
             print('COMPATIBILITY_PROOF ' + json.dumps(proof))
+
+    def test_forwarded_discovery_and_native_factory_wiring(self):
+        source = Path(os.environ['HERMES_AGENT_DIR'])
+        python = os.environ.get('HERMES_PYTHON', str(source / 'venv/bin/python'))
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as directory:
+            home = Path(directory)
+            for name in ('slack-forwarded', 'slack-namespace'):
+                shutil.copytree(ROOT / 'plugins' / name, home / 'plugins' / name)
+            (home / 'config.yaml').write_text(json.dumps({'plugins': {
+                'enabled': ['slack-forwarded', 'slack-namespace']}}))
+            env = {'PATH': os.environ['PATH'], 'HOME': str(home), 'HERMES_HOME': str(home),
+                   'PYTHONPATH': str(source), 'HERMES_SLACK_SLASH': 'hermes-offline',
+                   'HERMES_ENABLE_PROJECT_PLUGINS': 'false', 'TMPDIR': str(home)}
+            code = '''
+import json
+from hermes_cli.plugins import discover_plugins, get_plugin_manager
+from gateway.config import PlatformConfig
+from plugins.platforms.slack.adapter import SlackAdapter
+discover_plugins()
+names = [name for _, name in get_plugin_manager().get_platform_handler_factories('slack')]
+assert set(names) == {'slack-forwarded', 'slack-namespace'}, names
+class OfflineApp:
+    def __init__(self): self.commands = {}
+    def command(self, name):
+        def register(callback):
+            self.commands[name] = callback
+            return callback
+        return register
+adapter = SlackAdapter(PlatformConfig(enabled=True, token='offline-placeholder'))
+app = OfflineApp()
+adapter._wire_plugin_handlers(app)
+wrapped = adapter._append_link_unfurls
+adapter._wire_plugin_handlers(app)
+assert wrapped is adapter._append_link_unfurls
+out = wrapped('', [{'is_msg_unfurl': True, 'is_share': True, 'text': 'offline forward'}])
+assert 'offline forward' in out and 'UNTRUSTED' in out, out
+assert list(app.commands) == ['/hermes-offline'], app.commands
+assert SlackAdapter._append_link_unfurls('', [{'is_msg_unfurl': True, 'is_share': True, 'text': 'offline forward'}]) == ''
+print(json.dumps({'plugins': sorted(names), 'command': list(app.commands), 'forward_visible': True,
+                  'class_unchanged': True, 'native_rewire_idempotent': True}))
+'''
+            result = subprocess.run([python, '-c', code], cwd=home, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            proof = json.loads(result.stdout.splitlines()[-1])
+            self.assertTrue(proof['forward_visible'])
+            print('FORWARDED_COMPATIBILITY_PROOF ' + json.dumps(proof))
