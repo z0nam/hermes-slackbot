@@ -1,0 +1,9 @@
+name: slack-model-display
+version: "1.0.0"
+description: "Opt-in Slack per-message names using observed response models, without extra API calls"
+author: "Namun Cho"
+config_schema:
+  base_name:
+    type: string
+    default: ""
+    description: "Base display name; empty uses the adapter's authenticated workspace bot name"
