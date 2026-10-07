@@ -98,8 +98,23 @@ prevent the write. This is a plugin/tool boundary, not an OS-wide sandbox.
 Update/delete additionally call `auth.test`, read the exact target, and reject
 messages not owned by that user or carrying a bot identity; Slack independently
 enforces its permissions. Every successful mutation is read back at its exact
-channel/timestamp (or absence for delete); DM open is verified with
-`conversations.info`. Reply verification follows cursors and rejects repeated
+channel/timestamp (or absence for delete). DM open is verified directly from
+`conversations.open(users=..., return_im=true)` by checking the DM ID, `is_im`,
+and requested peer, without requiring `im:read` via `conversations.info`.
+
+Plain top-level DM posts preflight the token owner and existing DM, then read
+back once with `conversations.open(channel=..., return_im=true,
+prevent_creation=true)`. Verification requires the exact channel, peer, latest
+message timestamp, requested text, and token-owner user ID. App attribution
+(`bot_id`/`app_id`) on a user-token post is allowed; mutation ownership rules
+remain unchanged. This supports `im:write` + `chat:write` without adding
+`im:read`/`im:history`. It is **bounded latest-message verification**, not DM
+history access: missing/malformed latest data or a concurrent newer message
+fails closed as unverified, even if the post succeeded. Inspect the target;
+never automatically resend. DM replies preflight `conversations.replies` access
+before sending; DM update/delete retain exact-message ownership/read preflight.
+These operations still require history scopes/access and fail before mutation
+when unavailable. Reply verification follows cursors and rejects repeated
 cursors. Link/media unfurls are explicitly disabled on message write payloads.
 
 Subprocesses use argv lists, `shell=False`, and a per-call timeout (1–120 seconds,
@@ -108,8 +123,12 @@ missing read-back, Slack text transformation, or access failure can mean a write
 already happened. Errors therefore report failure/uncertainty, not fabricated
 success; **inspect the target before considering another post**. Returned text
 must match the requested text exactly; Slack transformations can conservatively
-cause an unverified result. Error details are suppressed to avoid leaking
-wrapper credentials.
+cause an unverified result. Error response bodies and wrapper stderr are
+suppressed to avoid leaking credentials. Allowlisted API error codes, method,
+stage (`preflight`, `write`, `verification`, or `request`), and known `needed`
+scope identifiers are returned as structured diagnostics; `missing_scope` is
+not mislabeled as rejected human approval. Unknown or malformed fields are
+suppressed. No scope is automatically requested or granted.
 
 ## Standalone CLI (other agents)
 
