@@ -102,6 +102,8 @@ HERMES_AGENT_DIR=~/.hermes/hermes-agent ~/.hermes/hermes-agent/venv/bin/python -
 python scripts/install.py <id> --link                                  # live-edit the plugins
 ```
 
+AI agents: see [`AGENTS.md`](AGENTS.md) (test pitfalls, live-symlink caution, PR rules).
+
 ## License
 
 MIT
