@@ -75,13 +75,13 @@ def active_account(entries: list) -> "str | None":
 
 def decide(prev: "str | None", cur: str, primary: str) -> "str | None":
     """Model alert kind: 'fallback' | 'recover' | None. (pure)"""
-    if not cur or not primary or prev == cur:
+    if prev is None or not cur or not primary or prev == cur:
         return None
     if cur != primary:
         return "fallback"
     if prev is not None and prev != primary:
         return "recover"
-    return None  # first call on the primary: stay quiet
+    return None
 
 
 def _pool_entries(provider: str) -> list:
@@ -134,7 +134,8 @@ def _on_post_api_request(session_id="", platform="", model="", provider="", **_k
         kind = decide(prev, provider, primary)
         if kind and plat != "slack":
             if kind == "fallback":
-                _send(f":warning: *Hermes model fallback* — primary `{primary}` unavailable; now on "
+                _send(f":warning: *Hermes model fallback* — observed provider change `{prev}` -> `{provider}` "
+                      f"(configured primary `{primary}`); now on "
                       f"`{model}` via `{provider}`. ({where})")
             else:
                 _send(f":white_check_mark: *Hermes back on primary* — `{model}` via `{provider}`. ({where})")
