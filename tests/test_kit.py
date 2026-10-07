@@ -87,10 +87,33 @@ class FallbackAlert(unittest.TestCase):
     def test_decide(self):
         P = "openai-codex"
         self.assertIsNone(fa.decide(None, P, P))
-        self.assertEqual(fa.decide(None, "anthropic", P), "fallback")
+        self.assertIsNone(fa.decide(None, "anthropic", P))
         self.assertEqual(fa.decide(P, "anthropic", P), "fallback")
         self.assertIsNone(fa.decide("anthropic", "anthropic", P))
         self.assertEqual(fa.decide("anthropic", P, P), "recover")
+
+    def test_resumed_fallback_session_starts_with_silent_baseline(self):
+        from unittest.mock import patch
+        sent = []
+        with patch.multiple(fa, _send=sent.append, _primary_provider=lambda: "openai-codex",
+                            _pool_entries=lambda p: []):
+            for provider in ("anthropic", "anthropic", "openai-codex", "anthropic", "anthropic"):
+                fa._on_post_api_request(session_id="resumed", platform="cli", model="m", provider=provider)
+        self.assertEqual([s.split("*")[1] for s in sent],
+                         ["Hermes back on primary", "Hermes model fallback"])
+
+    def test_model_alert_does_not_infer_failure_cause(self):
+        from unittest.mock import patch
+        sent = []
+        with patch.multiple(fa, _send=sent.append, _primary_provider=lambda: "openai-codex",
+                            _pool_entries=lambda p: []):
+            for provider in ("openai-codex", "anthropic"):
+                fa._on_post_api_request(session_id="switch", platform="cli", model="m", provider=provider)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("`openai-codex`", sent[0])
+        self.assertIn("`anthropic`", sent[0])
+        self.assertNotIn("unavailable", sent[0])
+        self.assertNotIn("limit", sent[0].lower())
 
     def test_active_account(self):
         E = lambda *st: [{"label": f"a{i}", "priority": i, "last_status": s} for i, s in enumerate(st)]
