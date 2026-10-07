@@ -75,6 +75,8 @@ Re-run step 1 with your id, then in your app: *Features → App Manifest → Edi
 
 Existing bot users can install only the new plugin with `python scripts/install.py --tools-only`, preserving their namespace and alert setup. Configure the exact workspace host and executable, then enable the `slack` platform toolset as described in [Slack tools](docs/slack-tools.md). Writes post as the human token owner, require a separate real approval for every action, and are read-back verified. Installation does not restart the gateway. Live API validation is intentionally separate from offline fake-executable tests.
 
+Plain DM opens and top-level posts work with `im:write` and `chat:write` without adding DM history/read scopes. DM posts use a bounded `conversations.open` latest-message read-back: a concurrent newer message makes verification fail closed, not trigger another send. DM replies and update/delete still require their existing history access and are preflighted before mutation. Never automatically retry an unverified write.
+
 ## Optional forwarded-message support
 
 `python scripts/install.py --forwarded-only` installs only `slack-forwarded`, preserving existing plugins and `HERMES_SLACK_SLASH`. For a new installation, use `python scripts/install.py alice --with-forwarded`. The installer never restarts the gateway. The plugin renders only attachments explicitly marked both `is_share=true` and `is_msg_unfurl=true`; ordinary message-link previews remain unchanged. See [setup, rollback and compatibility limits](docs/slack-forwarded.md).

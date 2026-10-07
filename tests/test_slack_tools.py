@@ -117,24 +117,135 @@ p.write_text(json.dumps(r))
         self.assertEqual(self.calls()[2][0], 'chat.delete')
 
     def test_dm_open_is_confirmed_and_verified(self):
-        c = self.client([{'ok': True, 'channel': {'id': 'D0123456789'}},
-                         {'ok': True, 'channel': {'id': 'D0123456789', 'is_im': True, 'user': 'U0123456789'}}])
+        c = self.client([{'ok': True, 'channel': {'id': 'D0123456789', 'is_im': True, 'user': 'U0123456789'}}])
         out = c.write('open_dm', user='U0123456789', approve=lambda p: True)
         self.assertTrue(out['verified'])
         self.assertEqual(out['channel'], 'D0123456789')
-        self.assertEqual([x[0] for x in self.calls()], ['conversations.open', 'conversations.info'])
+        self.assertEqual(self.calls(), [['conversations.open', 'users=' + out['user'], 'return_im=true']])
 
     def test_dm_open_accepts_enterprise_user_id(self):
         user = 'W0123456789'
-        c = self.client([{'ok': True, 'channel': {'id': 'D0123456789'}},
-                         {'ok': True, 'channel': {'id': 'D0123456789', 'is_im': True, 'user': user}}])
+        c = self.client([{'ok': True, 'channel': {'id': 'D0123456789', 'is_im': True, 'user': user}}])
         previews = []
         out = c.write('open_dm', user=user, approve=lambda p: previews.append(p) or True)
         self.assertTrue(out['verified'])
         self.assertEqual(out['user'], user)
         self.assertIn(user, previews[0])
         self.assertIn('users=' + user, self.calls()[0])
-        self.assertEqual([x[0] for x in self.calls()], ['conversations.open', 'conversations.info'])
+        self.assertEqual(self.calls(), [['conversations.open', 'users=' + out['user'], 'return_im=true']])
+
+    def test_dm_open_rejects_incomplete_or_wrong_channel(self):
+        for info in [None, {}, {'id': 'D0123456789'},
+                     {'id': 'C0123456789', 'is_im': True, 'user': 'U0123456789'},
+                     {'id': 'D1', 'is_im': True, 'user': 'U0123456789'},
+                     {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}]:
+            with self.subTest(info=info):
+                c = self.client([{'ok': True, 'channel': info}])
+                with self.assertRaises(RuntimeError):
+                    c.write('open_dm', user='U0123456789', approve=lambda p: True)
+        self.assertTrue(all(call[0] == 'conversations.open' for call in self.calls()))
+
+    def test_plain_dm_post_uses_bounded_readback_without_history_scopes(self):
+        msg = {'ts': '1760000001.000001', 'text': 'Hello', 'user': 'U0123456789'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        c = self.client([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+                         {'ok': True, 'channel': info['id'], 'ts': msg['ts']},
+                         {'ok': True, 'channel': dict(info, latest=msg)}])
+        previews = []
+        out = c.write('post', channel=info['id'], text=msg['text'], approve=lambda p: previews.append(p) or True)
+        self.assertTrue(out['verified'])
+        self.assertEqual(out['message'], msg)
+        self.assertEqual(len(previews), 1)
+        self.assertEqual([call[0] for call in self.calls()],
+                         ['auth.test', 'conversations.open', 'chat.postMessage', 'conversations.open'])
+        for call in [self.calls()[1], self.calls()[-1]]:
+            self.assertEqual(call, ['conversations.open', 'channel=' + info['id'], 'return_im=true', 'prevent_creation=true'])
+
+    def test_plain_dm_post_accepts_app_attributed_token_owner(self):
+        msg = {'ts': '1760000001.000001', 'text': 'Hello', 'user': 'U0123456789',
+               'bot_id': 'B0123456789', 'app_id': 'A0123456789'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        c = self.client([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+                         {'ok': True, 'channel': info['id'], 'ts': msg['ts']},
+                         {'ok': True, 'channel': dict(info, latest=msg)}])
+        self.assertTrue(c.write('post', channel=info['id'], text=msg['text'], approve=lambda p: True)['verified'])
+
+    def test_dm_reply_missing_history_scope_fails_before_send(self):
+        c = self.client([{'ok': False, 'error': 'missing_scope', 'needed': 'im:history'}])
+        with self.assertRaises(RuntimeError):
+            c.write('post', channel='D0123456789', thread_ts='1760000000.000001', text='x',
+                    approve=lambda p: self.fail('scope preflight must precede approval'))
+        self.assertEqual([call[0] for call in self.calls()], ['conversations.replies'])
+
+    def test_dm_latest_mismatch_never_reports_success_or_retries(self):
+        msg = {'ts': '1760000001.000001', 'text': 'Hello', 'user': 'U0123456789'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        for latest in [None, {}, dict(msg, ts='1760000002.000001'), dict(msg, text='changed'),
+                       dict(msg, user=info['user']), dict(msg, user='U1111111111'),
+                       dict(msg, thread_ts='1760000000.000001'), dict(msg, subtype='message_changed')]:
+            with self.subTest(latest=latest):
+                c = self.client([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+                                 {'ok': True, 'channel': info['id'], 'ts': msg['ts']},
+                                 {'ok': True, 'channel': dict(info, latest=latest)}])
+                with self.assertRaisesRegex(RuntimeError, 'not verified'):
+                    c.write('post', channel=info['id'], text=msg['text'], approve=lambda p: True)
+        self.assertEqual(sum(call[0] == 'chat.postMessage' for call in self.calls()), 8)
+        self.assertFalse(any(call[0] in ('conversations.history', 'conversations.info') for call in self.calls()))
+
+    def test_dm_mutations_missing_history_scope_fail_before_send(self):
+        for action in ('update', 'delete'):
+            with self.subTest(action=action):
+                c = self.client([{'ok': True, 'user_id': 'U0123456789'},
+                                 {'ok': False, 'error': 'missing_scope', 'needed': 'im:history'}])
+                with self.assertRaises(RuntimeError):
+                    c.write(action, channel='D0123456789', ts='1760000000.000001',
+                            text='x' if action == 'update' else '',
+                            approve=lambda p: self.fail('scope preflight must precede approval'))
+        self.assertEqual([call[0] for call in self.calls()], ['auth.test', 'conversations.history'] * 2)
+
+    def test_dm_preflight_rejects_wrong_channel_before_send(self):
+        for info in [None, {}, {'id': 'D9876543210', 'is_im': True, 'user': 'U9876543210'},
+                     {'id': 'D0123456789', 'is_im': False, 'user': 'U9876543210'},
+                     {'id': 'D0123456789', 'is_im': True, 'user': 'U1'}]:
+            with self.subTest(info=info):
+                c = self.client([{'ok': True, 'user_id': 'U0123456789'}, {'ok': True, 'channel': info}])
+                with self.assertRaises(RuntimeError):
+                    c.write('post', channel='D0123456789', text='x',
+                            approve=lambda p: True)
+        self.assertFalse(any(call[0].startswith('chat.') for call in self.calls()))
+
+    def test_plain_dm_declined_consent_never_opens_or_posts(self):
+        c = self.client([{'ok': True, 'user_id': 'U0123456789'}])
+        with self.assertRaises(PermissionError):
+            c.write('post', channel='D0123456789', text='x', approve=lambda p: False)
+        self.assertEqual([call[0] for call in self.calls()], ['auth.test'])
+
+    def test_dm_open_denied_consent_never_executes(self):
+        c = self.client([])
+        with self.assertRaises(PermissionError):
+            c.write('open_dm', user='U0123456789', approve=lambda p: False)
+        self.assertFalse(self.log.exists())
+
+    def test_dm_reply_with_history_scope_remains_supported(self):
+        msg = {'ts': '1760000001.000001', 'text': 'reply', 'user': 'U0123456789'}
+        c = self.client([{'ok': True, 'messages': [{'ts': '1760000000.000001'}]},
+                         {'ok': True, 'channel': 'D0123456789', 'ts': msg['ts']},
+                         {'ok': True, 'messages': [msg]}])
+        out = c.write('post', channel='D0123456789', text=msg['text'], thread_ts='1760000000.000001', approve=lambda p: True)
+        self.assertTrue(out['verified'])
+        self.assertEqual([call[0] for call in self.calls()], ['conversations.replies', 'chat.postMessage', 'conversations.replies'])
+
+    def test_dm_verification_rejects_changed_channel_or_peer(self):
+        msg = {'ts': '1760000001.000001', 'text': 'Hello', 'user': 'U0123456789'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        for changed in [dict(info, id='D9876543210'), dict(info, is_im=False), dict(info, user='U1111111111')]:
+            with self.subTest(changed=changed):
+                c = self.client([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+                                 {'ok': True, 'channel': info['id'], 'ts': msg['ts']},
+                                 {'ok': True, 'channel': dict(changed, latest=msg)}])
+                with self.assertRaises(RuntimeError):
+                    c.write('post', channel=info['id'], text=msg['text'], approve=lambda p: True)
+        self.assertEqual(sum(call[0] == 'chat.postMessage' for call in self.calls()), 3)
 
     def test_invalid_write_arguments_fail_before_confirmation(self):
         c = self.client([])
@@ -202,6 +313,86 @@ p.write_text(json.dumps(r))
         self.assertIn('C0123456789', prompts[0])
         self.assertFalse(self.log.exists())
         self.assertNotIn('confirmed', tools['sapi_slack_write']['schema']['parameters']['properties'])
+
+    def test_plugin_dm_open_and_post_use_separate_human_consents(self):
+        from types import ModuleType
+        from unittest.mock import patch
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        msg = {'ts': '1760000001.000001', 'text': 'approved body', 'user': 'U0123456789', 'bot_id': 'B0123456789'}
+        self.responses.write_text(json.dumps([{'ok': True, 'channel': info},
+            {'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+            {'ok': True, 'channel': info['id'], 'ts': msg['ts']}, {'ok': True, 'channel': dict(info, latest=msg)}]))
+        tool = self.plugin_tools()['sapi_slack_write']
+        gate = ModuleType('tools.approval_prompt')
+        prompts = []
+        def offline_consent(message, description, **kwargs):
+            prompts.append(json.loads(message))
+            return 'accept'
+        setattr(gate, 'request_elicitation_consent', offline_consent)
+        with patch.dict(sys.modules, {'tools.approval_prompt': gate}):
+            opened = json.loads(tool['handler']({'action': 'open_dm', 'user': info['user']}))
+            sent = json.loads(tool['handler']({'action': 'post', 'channel': info['id'], 'text': msg['text']}))
+        self.assertTrue(opened['success'])
+        self.assertTrue(sent['success'])
+        self.assertTrue(sent['data']['verified'])
+        self.assertEqual([p['action'] for p in prompts], ['open_dm', 'post'])
+        self.assertEqual(prompts[0]['user'], info['user'])
+        self.assertEqual(prompts[1]['channel'], info['id'])
+        self.assertEqual(prompts[1]['text'], msg['text'])
+
+    def test_api_diagnostics_identify_write_and_verification_stage(self):
+        from types import ModuleType
+        from unittest.mock import patch
+        gate = ModuleType('tools.approval_prompt')
+        setattr(gate, 'request_elicitation_consent', lambda *args, **kwargs: 'accept')  # Fake sapi only.
+        error = {'ok': False, 'error': 'missing_scope', 'needed': 'im:write'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        for responses, args, expected_stage in [([error], {'action': 'open_dm', 'user': info['user']}, 'write'),
+                ([{'ok': True, 'user_id': 'U0123456789'}, {'ok': True, 'channel': info},
+                  {'ok': True, 'channel': info['id'], 'ts': '1760000001.000001'}, error],
+                 {'action': 'post', 'channel': info['id'], 'text': 'private body'}, 'verification')]:
+            with self.subTest(stage=expected_stage):
+                self.responses.write_text(json.dumps(responses))
+                with patch.dict(sys.modules, {'tools.approval_prompt': gate}):
+                    out = json.loads(self.plugin_tools()['sapi_slack_write']['handler'](args))
+                self.assertEqual(out.get('code'), 'missing_scope')
+                self.assertEqual(out.get('stage'), expected_stage)
+                self.assertNotIn('private', json.dumps(out))
+
+    def test_scope_error_is_distinct_from_denied_consent_in_plugin(self):
+        self.responses.write_text(json.dumps([{'ok': False, 'error': 'missing_scope', 'needed': 'im:history',
+                                               'provided': 'private-token-data'}]))
+        tool = self.plugin_tools()['sapi_slack_write']
+        out = json.loads(tool['handler']({'action': 'post', 'channel': 'D0123456789',
+                                         'thread_ts': '1760000000.000001', 'text': 'private body'}))
+        self.assertFalse(out['success'])
+        self.assertEqual(out.get('code'), 'missing_scope')
+        self.assertEqual(out.get('needed'), ['im:history'])
+        self.assertEqual(out.get('method'), 'conversations.replies')
+        self.assertEqual(out.get('stage'), 'preflight')
+        self.assertNotIn('private', json.dumps(out))
+
+    def test_malicious_api_diagnostics_are_suppressed(self):
+        for error, needed in [('private-token-data', 'im:history,private-body'),
+                              ({'text': 'secret'}, ['im:read']), ('missing_scope', {'secret': 'body'}),
+                              ('missing_scope', 'im:read\\nprivate-body')]:
+            with self.subTest(error=error, needed=needed):
+                self.responses.write_text(json.dumps([{'ok': False, 'error': error, 'needed': needed}]))
+                out = json.loads(self.plugin_tools()['sapi_slack_read']['handler']({'operation': 'history', 'channel': 'D0123456789'}))
+                self.assertFalse(out['success'])
+                self.assertEqual(out.get('code'), 'missing_scope' if error == 'missing_scope' else 'slack_api_error')
+                self.assertNotIn('needed', out)
+                self.assertNotIn('private', json.dumps(out))
+                self.assertNotIn('secret', json.dumps(out))
+
+    def test_nonzero_exit_preserves_only_allowlisted_api_error(self):
+        self.fake.write_text('#!' + sys.executable + '\nimport json, sys\n'
+                             'print(json.dumps({"ok": False, "error": "missing_scope", "needed": "im:read"}))\n'
+                             'print("private stderr", file=sys.stderr)\nsys.exit(1)\n')
+        out = json.loads(self.plugin_tools()['sapi_slack_read']['handler']({'operation': 'history', 'channel': 'D0123456789'}))
+        self.assertEqual(out.get('code'), 'missing_scope')
+        self.assertEqual(out.get('needed'), ['im:read'])
+        self.assertNotIn('private', json.dumps(out))
 
     def test_standalone_cli_search_runs_fake_sapi(self):
         import subprocess

@@ -5,6 +5,48 @@ import subprocess
 from urllib.parse import parse_qs, urlsplit
 
 
+API_ERRORS = frozenset({'missing_scope', 'invalid_auth', 'not_authed', 'account_inactive',
+                        'channel_not_found', 'user_not_found', 'not_in_channel', 'no_permission',
+                        'access_denied', 'ratelimited', 'not_allowed_token_type', 'message_not_found'})
+SCOPES = frozenset({'identify', 'channels:history', 'groups:history', 'im:history', 'mpim:history',
+                    'channels:read', 'groups:read', 'im:read', 'mpim:read', 'im:write', 'mpim:write',
+                    'chat:write', 'search:read'})
+METHODS = frozenset({'auth.test', 'conversations.open', 'conversations.info', 'conversations.history',
+                     'conversations.replies', 'search.messages', 'chat.postMessage', 'chat.update', 'chat.delete'})
+STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
+
+
+class SlackRequestError(RuntimeError):
+    """Only allowlisted metadata escapes; never include response bodies or stderr."""
+    def __init__(self, data, method, stage):
+        error = data.get('error')
+        code = error if isinstance(error, str) and error in API_ERRORS else 'slack_api_error'
+        self.details: dict[str, object] = {'code': code}
+        if method in METHODS:
+            self.details['method'] = method
+        if stage in STAGES:
+            self.details['stage'] = stage
+        needed = data.get('needed')
+        if code == 'missing_scope' and isinstance(needed, str):
+            scopes = needed.split(',')
+            if scopes and all(scope in SCOPES for scope in scopes):
+                self.details['needed'] = list(dict.fromkeys(scopes))
+        super().__init__('Slack API rejected request: ' + code)
+
+
+def failure(exc):
+    out = {'success': False, 'error': 'Slack request failed or is unverified. Never automatically retry writes; inspect target first. Details suppressed.'}
+    if isinstance(exc, SlackRequestError):
+        out.update(exc.details)
+    elif isinstance(exc, PermissionError):
+        out.update(code='consent_or_ownership_denied', stage='preflight')
+    elif isinstance(exc, (ValueError, TypeError)):
+        out.update(code='invalid_arguments', stage='preflight')
+    else:
+        out['code'] = 'request_failed_or_unverified'
+    return out
+
+
 class SlackService:
     def __init__(self, executable='sapi', hosts=(), timeout=30):
         bounded(timeout, 1, 120, 'timeout')
@@ -14,17 +56,19 @@ class SlackService:
             validate(host, r'[a-z0-9-]+\.slack\.com', 'workspace host')
         self.executable, self.hosts, self.timeout = executable, tuple(hosts), timeout
 
-    def _call(self, method, **params):
+    def _call(self, method, *, stage='request', **params):
         try:
             result = subprocess.run([self.executable, method, *[f'{k}={v}' for k, v in params.items()]],
                                     capture_output=True, text=True, timeout=self.timeout, shell=False, encoding='utf-8')
-            if result.returncode:
-                raise RuntimeError('sapi failed (details suppressed)')
             data = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, ValueError):
             raise RuntimeError('sapi unavailable, timed out, or returned invalid JSON; do not retry writes automatically') from None
-        if not isinstance(data, dict) or data.get('ok') is not True:
-            raise RuntimeError('Slack API rejected request (details suppressed)')
+        if not isinstance(data, dict):
+            raise RuntimeError('Slack API returned malformed response (details suppressed)')
+        if data.get('ok') is not True:
+            raise SlackRequestError(data, method, stage)
+        if result.returncode:
+            raise RuntimeError('sapi failed (details suppressed)')
         if method in ('conversations.history', 'conversations.replies') and (
                 not isinstance(data.get('messages'), list) or not all(isinstance(m, dict) for m in data['messages'])):
             raise RuntimeError('Slack returned malformed messages; result is unverified')
@@ -54,9 +98,16 @@ class SlackService:
         if approve is None:
             raise PermissionError('Explicit human confirmation required for this action')
         before = None
+        dm_owner = dm_peer = None
+        if action == 'post' and channel.startswith('D') and not thread_ts:
+            dm_owner = self._call('auth.test', stage='preflight').get('user_id')
+            validate(dm_owner, r'[UW][A-Z0-9]{8,}', 'token owner ID')
+        if action == 'post' and channel.startswith('D') and thread_ts:
+            # Prove thread read-back access before mutating Slack; im:write is insufficient.
+            self._call('conversations.replies', stage='preflight', channel=channel, ts=thread_ts, limit=1)
         if action in ('update', 'delete'):
-            owner = self._call('auth.test').get('user_id')
-            before = self._exact(channel, ts, thread_ts)
+            owner = self._call('auth.test', stage='preflight').get('user_id')
+            before = self._exact(channel, ts, thread_ts, stage='preflight')
             if not owner or not before or before.get('user') != owner or before.get('bot_id'):
                 raise PermissionError('Only messages owned by the sapi user may be changed')
         preview = json.dumps({'identity': 'sapi user token (posts as a human)', 'action': action,
@@ -64,11 +115,16 @@ class SlackService:
                               'user': user, 'existing_text': before.get('text', '') if before else ''}, ensure_ascii=False)
         if approve(preview) is not True:
             raise PermissionError('Explicit human confirmation required for this action')
+        if dm_owner:
+            # Even a bounded open can resume a DM: obtain real consent first.
+            dm_peer = self._dm_info(channel, stage='preflight')['user']
         if action == 'open_dm':
-            channel = self._call('conversations.open', users=user, return_im='true')['channel']['id']
-            info = self._call('conversations.info', channel=channel)['channel']
-            if info.get('id') != channel or info.get('is_im') is not True or info.get('user') != user:
+            info = self._call('conversations.open', stage='write', users=user, return_im='true').get('channel')
+            if (not isinstance(info, dict) or not isinstance(info.get('id'), str)
+                    or not re.fullmatch(r'D[A-Z0-9]{8,}', info['id'])
+                    or info.get('is_im') is not True or info.get('user') != user):
                 raise RuntimeError('DM open not verified; do not retry automatically')
+            channel = info['id']
             return {'verified': True, 'channel': channel, 'user': user}
         params = {'channel': channel, 'text': text, 'unfurl_links': 'false', 'unfurl_media': 'false'}
         if action in ('update', 'delete'):
@@ -77,23 +133,38 @@ class SlackService:
             params['thread_ts'] = thread_ts
         if action == 'delete':
             params = {'channel': channel, 'ts': ts}
-        result = self._call({'post': 'chat.postMessage', 'update': 'chat.update', 'delete': 'chat.delete'}[action], **params)
+        result = self._call({'post': 'chat.postMessage', 'update': 'chat.update', 'delete': 'chat.delete'}[action], stage='write', **params)
         sent_ts = result.get('ts')
         if result.get('channel') != channel or not sent_ts or (action in ('update', 'delete') and sent_ts != ts):
             raise RuntimeError('Write outcome ambiguous; do not retry automatically')
-        message = self._exact(channel, sent_ts, thread_ts)
+        if dm_owner:
+            info = self._dm_info(channel, stage='verification')
+            message = info.get('latest')
+            if (info['user'] != dm_peer or not isinstance(message, dict)
+                    or message.get('ts') != sent_ts or message.get('user') != dm_owner
+                    or message.get('subtype') or message.get('thread_ts')):
+                raise RuntimeError('DM write not verified; do not retry automatically')
+        else:
+            message = self._exact(channel, sent_ts, thread_ts, stage='verification')
         if (action == 'delete' and message is not None) or (action != 'delete' and (not message or message.get('text') != text)):
             raise RuntimeError('Write not verified; do not retry automatically')
         return {'verified': True, 'channel': channel, 'ts': sent_ts, 'message': message}
 
-    def _exact(self, channel, ts, thread_ts=''):
+    def _dm_info(self, channel, *, stage='request'):
+        info = self._call('conversations.open', stage=stage, channel=channel, return_im='true', prevent_creation='true').get('channel')
+        if (not isinstance(info, dict) or info.get('id') != channel or info.get('is_im') is not True
+                or not isinstance(info.get('user'), str) or not re.fullmatch(r'[UW][A-Z0-9]{8,}', info['user'])):
+            raise RuntimeError('DM channel not verified; do not retry automatically')
+        return info
+
+    def _exact(self, channel, ts, thread_ts='', *, stage='request'):
         cursor = ''
         seen = {cursor}
         while True:
             if thread_ts:
-                data = self._call('conversations.replies', channel=channel, ts=thread_ts, cursor=cursor, limit=100)
+                data = self._call('conversations.replies', stage=stage, channel=channel, ts=thread_ts, cursor=cursor, limit=100)
             else:
-                data = self._call('conversations.history', channel=channel, oldest=ts, latest=ts, inclusive='true', limit=1)
+                data = self._call('conversations.history', stage=stage, channel=channel, oldest=ts, latest=ts, inclusive='true', limit=1)
             matches = [m for m in data.get('messages', []) if m.get('ts') == ts]
             if matches:
                 return matches[0]
@@ -195,8 +266,8 @@ def main():
             data = client.write(options.operation, **args, approve=consent)
         print(json.dumps({'success': True, 'data': data}, ensure_ascii=False))
         return 0
-    except Exception:
-        print(json.dumps({'success': False, 'error': 'Slack request denied or failed; details suppressed. Never automatically retry writes.'}))
+    except Exception as exc:
+        print(json.dumps(failure(exc)))
         return 1
 
 
