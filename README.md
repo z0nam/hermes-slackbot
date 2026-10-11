@@ -30,7 +30,7 @@ Each person gets **`Hermes-<id>`** as the app name and **one** command, **`/herm
 | `plugins/fallback-alert` | Optional. One Slack message to your home channel when Hermes falls back to another model/provider (and when it recovers), or when a credential pool moves to its next account. |
 | `plugins/slack-tools` | Optional, separately installed. Browser-free reads and human-confirmed writes via a configurable **user-token** `sapi` CLI. [Setup and safety](docs/slack-tools.md). |
 | `plugins/slack-forwarded` | Optional, opt-in. Makes Slack **Forward message** attachments visible as bounded, untrusted quotes without fetching the source channel. [Setup and limits](docs/slack-forwarded.md). |
-| `plugins/slack-model-display` | Optional, opt-in. Adds the observed serving model to ordinary response message names, without profile changes or extra API calls. [Setup and transport limits](docs/slack-model-display.md). |
+| `plugins/slack-model-display` | Optional, opt-in. Adds the observed serving model (or explicit unknown) to confirmed final-answer message names; leaves progress unlabelled, without profile changes or extra API calls. [Setup and transport limits](docs/slack-model-display.md). |
 | `scripts/install.py` | Copies (or links) the plugins into your Hermes, enables them, sets `HERMES_SLACK_SLASH`. |
 
 The namespace/alert kit is stdlib Python and works on **Windows, macOS and Linux** — paths are resolved through `hermes config env-path`, never hardcoded. The optional Slack tools are also stdlib-only but require a platform-compatible `sapi` executable; their new Windows path is not yet host-tested.
