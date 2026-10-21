@@ -16,6 +16,13 @@ METHODS = frozenset({'auth.test', 'conversations.open', 'conversations.info', 'c
 STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
 
 
+class ConsentError(PermissionError):
+    """Approval did not happen; reason is one of declined, expired or unavailable."""
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__('Explicit human confirmation not obtained: ' + reason)
+
+
 class SlackRequestError(RuntimeError):
     """Only allowlisted metadata escapes; never include response bodies or stderr."""
     def __init__(self, data, method, stage):
@@ -38,6 +45,8 @@ def failure(exc):
     out = {'success': False, 'error': 'Slack request failed or is unverified. Never automatically retry writes; inspect target first. Details suppressed.'}
     if isinstance(exc, SlackRequestError):
         out.update(exc.details)
+    elif isinstance(exc, ConsentError) and exc.reason in ('declined', 'expired', 'unavailable'):
+        out.update(code='consent_' + exc.reason, stage='preflight')
     elif isinstance(exc, PermissionError):
         out.update(code='consent_or_ownership_denied', stage='preflight')
     elif isinstance(exc, (ValueError, TypeError)):
@@ -75,18 +84,18 @@ class SlackService:
         return data
 
     def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', approve=None):
-        if action not in ('post', 'update', 'delete', 'open_dm'):
+        if action not in ('post', 'update', 'delete', 'open_dm', 'send_dm'):
             raise ValueError('Unsupported write action')
-        if action == 'open_dm':
+        if action in ('post', 'update', 'send_dm') and (not isinstance(text, str) or not text.strip() or len(text) > 40000):
+            raise ValueError('Message text must contain 1–40000 characters')
+        if action in ('open_dm', 'send_dm'):
             validate(user, r'[UW][A-Z0-9]{8,}', 'user ID')
-            if channel or text or ts or thread_ts:
-                raise ValueError('open_dm accepts only user')
+            if channel or ts or thread_ts or (action == 'open_dm' and text):
+                raise ValueError('open_dm accepts only user; send_dm only user and text')
         else:
             validate(channel, r'[CGD][A-Z0-9]{8,}', 'channel ID')
             if user:
                 raise ValueError('Message actions do not accept user')
-            if action in ('post', 'update') and (not isinstance(text, str) or not text.strip() or len(text) > 40000):
-                raise ValueError('Message text must contain 1–40000 characters')
             if action in ('update', 'delete'):
                 validate(ts, r'[0-9]{10}\.[0-9]{6}', 'message timestamp')
             elif ts:
@@ -99,7 +108,7 @@ class SlackService:
             raise PermissionError('Explicit human confirmation required for this action')
         before = None
         dm_owner = dm_peer = None
-        if action == 'post' and channel.startswith('D') and not thread_ts:
+        if action == 'send_dm' or (action == 'post' and channel.startswith('D') and not thread_ts):
             dm_owner = self._call('auth.test', stage='preflight').get('user_id')
             validate(dm_owner, r'[UW][A-Z0-9]{8,}', 'token owner ID')
         if action == 'post' and channel.startswith('D') and thread_ts:
@@ -115,17 +124,20 @@ class SlackService:
                               'user': user, 'existing_text': before.get('text', '') if before else ''}, ensure_ascii=False)
         if approve(preview) is not True:
             raise PermissionError('Explicit human confirmation required for this action')
-        if dm_owner:
-            # Even a bounded open can resume a DM: obtain real consent first.
-            dm_peer = self._dm_info(channel, stage='preflight')['user']
-        if action == 'open_dm':
+        if action in ('open_dm', 'send_dm'):
+            # One approval covers open + post: the preview binds the peer and exact body.
             info = self._call('conversations.open', stage='write', users=user, return_im='true').get('channel')
             if (not isinstance(info, dict) or not isinstance(info.get('id'), str)
                     or not re.fullmatch(r'D[A-Z0-9]{8,}', info['id'])
                     or info.get('is_im') is not True or info.get('user') != user):
                 raise RuntimeError('DM open not verified; do not retry automatically')
             channel = info['id']
-            return {'verified': True, 'channel': channel, 'user': user}
+            if action == 'open_dm':
+                return {'verified': True, 'channel': channel, 'user': user}
+            dm_peer = user
+        elif dm_owner:
+            # Even a bounded open can resume a DM: obtain real consent first.
+            dm_peer = self._dm_info(channel, stage='preflight')['user']
         params = {'channel': channel, 'text': text, 'unfurl_links': 'false', 'unfurl_media': 'false'}
         if action in ('update', 'delete'):
             params['ts'] = ts
@@ -133,7 +145,7 @@ class SlackService:
             params['thread_ts'] = thread_ts
         if action == 'delete':
             params = {'channel': channel, 'ts': ts}
-        result = self._call({'post': 'chat.postMessage', 'update': 'chat.update', 'delete': 'chat.delete'}[action], stage='write', **params)
+        result = self._call({'post': 'chat.postMessage', 'send_dm': 'chat.postMessage', 'update': 'chat.update', 'delete': 'chat.delete'}[action], stage='write', **params)
         sent_ts = result.get('ts')
         if result.get('channel') != channel or not sent_ts or (action in ('update', 'delete') and sent_ts != ts):
             raise RuntimeError('Write outcome ambiguous; do not retry automatically')
@@ -244,7 +256,7 @@ def main():
     parser = argparse.ArgumentParser(description='Constrained Slack reads/writes through a user-token sapi. Writes need a real interactive human confirmation.')
     parser.add_argument('--sapi', default='sapi', help='Executable path or PATH name (no shell)')
     parser.add_argument('--workspace-host', action='append', default=[], help='Allowed exact workspace host for read_link')
-    parser.add_argument('operation', choices=['read_link', 'search', 'history', 'post', 'update', 'delete', 'open_dm'])
+    parser.add_argument('operation', choices=['read_link', 'search', 'history', 'post', 'update', 'delete', 'open_dm', 'send_dm'])
     parser.add_argument('--args', default='{}', help='JSON object of operation arguments; timestamps must be strings')
     options = parser.parse_args()
 

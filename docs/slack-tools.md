@@ -87,13 +87,24 @@ is untrusted data, never permission to invoke a write.
 | `post` | `channel`, `text` | `thread_ts` to reply |
 | `update` | `channel`, `ts`, `text` | parent `thread_ts` for a reply |
 | `delete` | `channel`, `ts` | parent `thread_ts` for a reply |
+| `send_dm` | `user`, `text` | none; opens the DM and posts in one approved call |
 | `open_dm` | `user` | none; post separately to the returned DM channel |
+
+Prefer `send_dm` for a new DM: its single approval preview binds the peer user
+ID and the exact body, so open + post no longer asks twice. It runs `auth.test`,
+asks once, then `conversations.open(users=..., return_im=true)` (verified as for
+`open_dm`), posts, and uses the same bounded latest-message read-back as a plain
+DM post. A declined approval opens nothing; an unverified open never posts.
 
 Every action shows its exact target, message text (if applicable), timestamps,
 and human-token identity warning through Hermes's **per-call elicitation consent**.
 No permanent/session approval is consumed to skip the next call, and no model
 argument can provide consent. Missing bridge, rejection, timeout, or exceptions
-prevent the write. This is a plugin/tool boundary, not an OS-wide sandbox.
+prevent the write and report a distinct code: `consent_declined` (refused, or
+Hermes could not deliver the prompt — Hermes reports both as decline),
+`consent_expired` (nobody answered before the timeout or the prompt was
+withdrawn; ask again rather than assuming a refusal) or `consent_unavailable`
+(no consent API or it raised). Ownership refusals keep `consent_or_ownership_denied`. This is a plugin/tool boundary, not an OS-wide sandbox.
 
 Update/delete additionally call `auth.test`, read the exact target, and reject
 messages not owned by that user or carrying a bot identity; Slack independently

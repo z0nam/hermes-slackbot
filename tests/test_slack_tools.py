@@ -226,6 +226,51 @@ p.write_text(json.dumps(r))
             c.write('open_dm', user='U0123456789', approve=lambda p: False)
         self.assertFalse(self.log.exists())
 
+    def test_send_dm_opens_posts_and_verifies_with_one_consent(self):
+        msg = {'ts': '1760000001.000001', 'text': 'Hello', 'user': 'U0123456789'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        c = self.client([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+                         {'ok': True, 'channel': info['id'], 'ts': msg['ts']},
+                         {'ok': True, 'channel': dict(info, latest=msg)}])
+        previews = []
+        out = c.write('send_dm', user=info['user'], text=msg['text'], approve=lambda p: previews.append(json.loads(p)) or True)
+        self.assertTrue(out['verified'])
+        self.assertEqual((out['channel'], out['ts']), (info['id'], msg['ts']))
+        self.assertEqual(len(previews), 1)
+        self.assertEqual((previews[0]['action'], previews[0]['user'], previews[0]['text']), ('send_dm', info['user'], msg['text']))
+        calls = self.calls()
+        self.assertEqual([call[0] for call in calls],
+                         ['auth.test', 'conversations.open', 'chat.postMessage', 'conversations.open'])
+        self.assertEqual(calls[1], ['conversations.open', 'users=' + info['user'], 'return_im=true'])
+        self.assertIn('unfurl_links=false', calls[2])
+        self.assertEqual(calls[3], ['conversations.open', 'channel=' + info['id'], 'return_im=true', 'prevent_creation=true'])
+
+    def test_send_dm_declined_consent_never_opens_or_posts(self):
+        c = self.client([{'ok': True, 'user_id': 'U0123456789'}])
+        with self.assertRaises(PermissionError):
+            c.write('send_dm', user='U9876543210', text='x', approve=lambda p: False)
+        self.assertEqual([call[0] for call in self.calls()], ['auth.test'])
+
+    def test_send_dm_unverified_open_never_posts(self):
+        for info in [{'id': 'D0123456789', 'is_im': True, 'user': 'U1111111111'},
+                     {'id': 'C0123456789', 'is_im': False, 'user': 'U9876543210'}]:
+            with self.subTest(info=info):
+                c = self.client([{'ok': True, 'user_id': 'U0123456789'}, {'ok': True, 'channel': info}])
+                with self.assertRaises(RuntimeError):
+                    c.write('send_dm', user='U9876543210', text='x', approve=lambda p: True)
+        self.assertFalse(any(call[0] == 'chat.postMessage' for call in self.calls()))
+
+    def test_send_dm_readback_rejects_newer_message_or_peer_change_without_retry(self):
+        msg = {'ts': '1760000001.000001', 'text': 'Hello', 'user': 'U0123456789'}
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        for latest in [dict(info, latest=dict(msg, ts='1760000002.000001')), dict(info, user='U1111111111', latest=msg)]:
+            with self.subTest(latest=latest):
+                c = self.client([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+                                 {'ok': True, 'channel': info['id'], 'ts': msg['ts']}, {'ok': True, 'channel': latest}])
+                with self.assertRaises(RuntimeError):
+                    c.write('send_dm', user=info['user'], text=msg['text'], approve=lambda p: True)
+        self.assertEqual(sum(call[0] == 'chat.postMessage' for call in self.calls()), 2)
+
     def test_dm_reply_with_history_scope_remains_supported(self):
         msg = {'ts': '1760000001.000001', 'text': 'reply', 'user': 'U0123456789'}
         c = self.client([{'ok': True, 'messages': [{'ts': '1760000000.000001'}]},
@@ -251,7 +296,10 @@ p.write_text(json.dumps(r))
         c = self.client([])
         for args in [dict(action='files.delete', channel='C0123456789'), dict(action='post', channel='C1', text='x'),
                      dict(action='update', channel='C0123456789', ts='1.2', text='x'),
-                     dict(action='post', channel='C0123456789', text=''), dict(action='open_dm', user='U1')]:
+                     dict(action='post', channel='C0123456789', text=''), dict(action='open_dm', user='U1'),
+                     dict(action='open_dm', user='U0123456789', text='x'), dict(action='send_dm', user='U0123456789'),
+                     dict(action='send_dm', user='U0123456789', text='x', channel='D0123456789'),
+                     dict(action='send_dm', user='U0123456789', text='x', thread_ts='1760000000.000001')]:
             with self.subTest(args=args), self.assertRaises(ValueError):
                 c.write(**args, approve=lambda p: self.fail('must validate before consent'))
         self.assertFalse(self.log.exists())
@@ -339,6 +387,44 @@ p.write_text(json.dumps(r))
         self.assertEqual(prompts[0]['user'], info['user'])
         self.assertEqual(prompts[1]['channel'], info['id'])
         self.assertEqual(prompts[1]['text'], msg['text'])
+
+    def test_plugin_send_dm_needs_exactly_one_human_consent(self):
+        from types import ModuleType
+        from unittest.mock import patch
+        info = {'id': 'D0123456789', 'is_im': True, 'user': 'U9876543210'}
+        msg = {'ts': '1760000001.000001', 'text': 'approved body', 'user': 'U0123456789'}
+        self.responses.write_text(json.dumps([{'ok': True, 'user_id': msg['user']}, {'ok': True, 'channel': info},
+            {'ok': True, 'channel': info['id'], 'ts': msg['ts']}, {'ok': True, 'channel': dict(info, latest=msg)}]))
+        tool = self.plugin_tools()['sapi_slack_write']
+        self.assertIn('send_dm', tool['schema']['parameters']['properties']['action']['enum'])
+        gate = ModuleType('tools.approval_prompt')
+        prompts = []
+        setattr(gate, 'request_elicitation_consent', lambda message, description, **kw: prompts.append(json.loads(message)) or 'accept')
+        with patch.dict(sys.modules, {'tools.approval_prompt': gate}):
+            sent = json.loads(tool['handler']({'action': 'send_dm', 'user': info['user'], 'text': msg['text']}))
+        self.assertTrue(sent['success'], sent)
+        self.assertTrue(sent['data']['verified'])
+        self.assertEqual([(p['action'], p['user'], p['text']) for p in prompts], [('send_dm', info['user'], msg['text'])])
+
+    def test_plugin_reports_declined_expired_and_unavailable_consent_distinctly(self):
+        from types import ModuleType
+        from unittest.mock import patch
+        def raising(*args, **kwargs):
+            raise RuntimeError('bridge exploded with private detail')
+        for answer, code in [('decline', 'consent_declined'), ('cancel', 'consent_expired'), (raising, 'consent_unavailable')]:
+            with self.subTest(code=code):
+                gate = ModuleType('tools.approval_prompt')
+                setattr(gate, 'request_elicitation_consent', answer if callable(answer) else (lambda *a, answer=answer, **kw: answer))
+                with patch.dict(sys.modules, {'tools.approval_prompt': gate}):
+                    out = json.loads(self.plugin_tools()['sapi_slack_write']['handler'](
+                        {'action': 'post', 'channel': 'C0123456789', 'text': 'private body'}))
+                self.assertFalse(out['success'])
+                self.assertEqual((out.get('code'), out.get('stage')), (code, 'preflight'))
+                self.assertNotIn('private', json.dumps(out))
+        with patch.dict(sys.modules, {'tools.approval_prompt': None}):
+            out = json.loads(self.plugin_tools()['sapi_slack_write']['handler']({'action': 'post', 'channel': 'C0123456789', 'text': 'x'}))
+        self.assertEqual(out.get('code'), 'consent_unavailable')
+        self.assertFalse(self.log.exists())
 
     def test_api_diagnostics_identify_write_and_verification_stage(self):
         from types import ModuleType

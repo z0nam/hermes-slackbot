@@ -1,7 +1,7 @@
 """Thin Hermes registration layer; the service and CLI are agent-neutral."""
 import json
 import shutil
-from .service import SlackService, failure
+from .service import ConsentError, SlackService, failure
 
 
 def register(ctx):
@@ -24,9 +24,16 @@ def register(ctx):
             return json.dumps(failure(exc))
 
     def consent(preview):
-        from tools.approval_prompt import request_elicitation_consent
-        return request_elicitation_consent(preview, 'Slack action as the sapi human user. Approve only this exact target and body.',
-                                           surface='slack-tools', title='Confirm Slack write?') == 'accept'
+        try:
+            from tools.approval_prompt import request_elicitation_consent
+            answer = request_elicitation_consent(preview, 'Slack action as the sapi human user. Approve only this exact target and body.',
+                                                 surface='slack-tools', title='Confirm Slack write?')
+        except Exception:
+            raise ConsentError('unavailable') from None
+        if answer == 'accept':
+            return True
+        # Hermes reports a timeout or withdrawn prompt as cancel; refusals and bridge failures as decline.
+        raise ConsentError('expired' if answer == 'cancel' else 'declined')
 
     def write(args, **kwargs):
         try:
@@ -36,9 +43,9 @@ def register(ctx):
             return json.dumps(failure(exc))
 
     ctx.register_tool(name='sapi_slack_write', toolset='slack', check_fn=ready, handler=write,
-                      schema={'name': 'sapi_slack_write', 'description': 'Post or reply (post + thread_ts), update/delete own messages, or open a DM via sapi USER token, as the human token owner, not the bot. Every action requires separate real human approval with target/body shown and read-back verification. Plain DM posts use bounded latest-message verification without DM history; concurrent newer messages fail closed. DM replies/update/delete require history access and preflight before mutation. Never automatically retry ambiguous writes. Supply parent thread_ts for reply updates/deletes.',
+                      schema={'name': 'sapi_slack_write', 'description': 'Post or reply (post + thread_ts), update/delete own messages, open a DM, or send a new DM to a user in one step (send_dm + user + text; prefer it over open_dm then post) via sapi USER token, as the human token owner, not the bot. Every call requires its own real human approval with target/body shown and read-back verification. Plain DM posts use bounded latest-message verification without DM history; concurrent newer messages fail closed. DM replies/update/delete require history access and preflight before mutation. Never automatically retry ambiguous writes. Supply parent thread_ts for reply updates/deletes.',
                               'parameters': {'type': 'object', 'properties': {
-                                  'action': {'type': 'string', 'enum': ['post', 'update', 'delete', 'open_dm']},
+                                  'action': {'type': 'string', 'enum': ['post', 'update', 'delete', 'open_dm', 'send_dm']},
                                   'channel': {'type': 'string'}, 'text': {'type': 'string'}, 'ts': {'type': 'string'},
                                   'thread_ts': {'type': 'string'}, 'user': {'type': 'string'}},
                                   'required': ['action'], 'additionalProperties': False}})
