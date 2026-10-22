@@ -74,7 +74,7 @@ Re-run step 1 with your id, then in your app: *Features → App Manifest → Edi
 
 ## Optional Slack read/write tools
 
-Existing bot users can install only the new plugin with `python scripts/install.py --tools-only`, preserving their namespace and alert setup. Configure the exact workspace host and executable, then enable the `slack` platform toolset as described in [Slack tools](docs/slack-tools.md). Writes post as the human token owner, require a separate real approval for every action, and are read-back verified. Installation does not restart the gateway. Live API validation is intentionally separate from offline fake-executable tests.
+Existing bot users can install only the new plugin with `python scripts/install.py --tools-only`, preserving their namespace and alert setup. Configure the exact workspace host and executable, then enable the `slack` platform toolset as described in [Slack tools](docs/slack-tools.md). Writes post as the human token owner, require a separate real approval for every call (`send_dm` opens and posts a new DM under one approval), and are read-back verified. Installation does not restart the gateway. Live API validation is intentionally separate from offline fake-executable tests.
 
 Plain DM opens and top-level posts work with `im:write` and `chat:write` without adding DM history/read scopes. DM posts use a bounded `conversations.open` latest-message read-back: a concurrent newer message makes verification fail closed, not trigger another send. DM replies and update/delete still require their existing history access and are preflighted before mutation. Never automatically retry an unverified write.
 
