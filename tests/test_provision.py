@@ -75,6 +75,23 @@ class Provision(unittest.TestCase):
         with mock.patch.object(self.pa, "call", fake), self.assertRaises(SystemExit):
             self.pa.cmd_create(NS(id="alice", user="U1", force=False))  # already registered
 
+    def test_call_waits_out_rate_limit(self):
+        import io
+        import urllib.error
+        hits, slept = [], []
+
+        def urlopen(req, timeout):
+            hits.append(req.full_url)
+            if len(hits) == 1:
+                raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {"Retry-After": "7"}, None)
+            return io.BytesIO(b'{"ok": true}')
+
+        with mock.patch.object(self.pa.urllib.request, "urlopen", urlopen), \
+                mock.patch.object(self.pa.time, "sleep", slept.append), mock.patch("sys.stderr"):
+            self.assertEqual(self.pa.call("apps.manifest.update", app_id="A1"), {"ok": True})
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(slept, [7])
+
     def test_changed_paths(self):
         old = {"a": {"b": 1, "c": [1]}, "d": 1}
         new = {"a": {"b": 2, "c": [1]}, "e": 1}

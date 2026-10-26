@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -77,12 +78,21 @@ def save_refresh(value: str) -> None:
 
 # ── Slack Web API ─────────────────────────────────────────────────────────────
 
-def call(method: str, **params) -> dict:
+def call(method: str, retries: int = 5, **params) -> dict:
+    """POST a Web API method; on HTTP 429 wait Slack's Retry-After and try again."""
     data = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}).encode()
-    req = urllib.request.Request(API + method, data=data,
-                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(API + method, data=data,
+                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == retries:
+                raise
+            wait = int(e.headers.get("Retry-After") or 30)
+            print(f"  rate limited by Slack on {method}; waiting {wait}s", file=sys.stderr)
+            time.sleep(wait)
 
 
 def access_token() -> str:
@@ -212,7 +222,6 @@ def cmd_update_all(a) -> None:
                          manifest=json.dumps(new, ensure_ascii=False)), f"update {ident}")
         note = "  → scopes changed: reinstall at " + links(row["app_id"])[0][1] if res.get("permissions_updated") else ""
         print(f"Hermes-{ident}: updated{note}")
-        time.sleep(1.5)  # apps.manifest.* is rate tier 1
 
 
 def main() -> None:
