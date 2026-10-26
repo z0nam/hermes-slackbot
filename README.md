@@ -3,7 +3,7 @@
 > Kit for running your **personal [Hermes Agent](https://github.com/NousResearch/hermes-agent) as a Slack bot** in a workspace where other people run theirs too.
 > Independent project — not affiliated with Nous Research.
 
-[한국어 안내](docs/ko.md) · [Hermes에게 설치를 맡기는 프롬프트 (한국어)](docs/hermes-prompt.ko.md)
+[한국어 안내](docs/ko.md) · [Hermes에게 설치를 맡기는 프롬프트 (한국어)](docs/hermes-prompt.ko.md) · [관리자 대리 설치 (한국어)](docs/admin-provision.ko.md)
 
 ## The problem
 
@@ -32,6 +32,8 @@ Each person gets **`Hermes-<id>`** as the app name and **one** command, **`/herm
 | `plugins/slack-forwarded` | Optional, opt-in. Makes Slack **Forward message** attachments visible as bounded, untrusted quotes without fetching the source channel. [Setup and limits](docs/slack-forwarded.md). |
 | `plugins/slack-model-display` | Optional, opt-in. Adds the observed serving model (or explicit unknown) to confirmed final-answer message names; leaves progress unlabelled, without profile changes or extra API calls. [Setup and transport limits](docs/slack-model-display.md). |
 | `scripts/install.py` | Copies (or links) the plugins into your Hermes, enables them, sets `HERMES_SLACK_SLASH`. |
+| `scripts/provision_app.py` | Admin-side. Creates teammates' `Hermes-<id>` apps through the App Manifest API, keeps the 12-hour config token alive by rotation, and re-applies the manifest to every app after a Hermes update. |
+| `scripts/setup_pc.py` | Teammate-side, one command for an admin-created app: checks both tokens against Slack, writes them with a self-only allowlist, installs the plugins, restarts the gateway and waits for the log to confirm. |
 
 The namespace/alert kit is stdlib Python and works on **Windows, macOS and Linux** — paths are resolved through `hermes config env-path`, never hardcoded. The optional Slack tools are also stdlib-only but require a platform-compatible `sapi` executable; their new Windows path is not yet host-tested.
 
@@ -67,6 +69,10 @@ hermes gateway restart
 6. In Slack: DM the bot, then try `/hermes-alice help`.
 
 **Lock it to yourself.** Your Hermes acts with your machine's files, shell and logged-in accounts. Keep `SLACK_ALLOWED_USERS` to your own Member ID.
+
+### Admin creates the apps for the team
+
+If setting up a Slack app is too much for teammates, a workspace admin can own every `Hermes-<id>` app and hand over only two tokens — about 3 minutes per person on the admin side and 5 on the teammate's PC. Step-by-step (Korean): [docs/admin-provision.ko.md](docs/admin-provision.ko.md).
 
 ### Already have a stock Hermes app?
 
