@@ -13,6 +13,8 @@ A kit of **Hermes Agent user plugins + stdlib scripts** for running a personal H
 | `plugins/slack-tools` | Optional `sapi` user-token tools. Posts appear as the **human**, not the bot — writes stay human-confirmed. |
 | `plugins/slack-forwarded` | Optional; restores Slack "Forward message" attachments as bounded, untrusted quotes. |
 | `scripts/make_manifest.py` | Derives the manifest from the installed Hermes; only renames and keeps one command. Slash-command description is a fixed string (Slack caps it at 75 chars). |
+| `scripts/provision_app.py` | Admin-side App Manifest API client. Rotates the config token and **stores the new refresh token before using the access token** (a rotation consumes the old one). Registry lives in `~/.config/hermes-slackbot/`, never in the repo. |
+| `scripts/setup_pc.py` | Teammate-side one-shot for an admin-created app; reuses `install.py`. Never prints token values. |
 | `scripts/install.py` | Resolves paths via `hermes config env-path` — never hardcode `~/.hermes` (Windows uses `%LOCALAPPDATA%\hermes`). |
 
 ## Tests
