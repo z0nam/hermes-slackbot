@@ -80,6 +80,29 @@ python3 scripts/provision_app.py update-all
 - 권한(스코프)이 바뀐 앱은 재설치 링크가 출력됩니다. 관리자가 눌러 재설치합니다.
 - 구성원 PC에서는 할 일이 없습니다. 토큰은 그대로 유지됩니다.
 
+## jaix-setup 경로: 연결 코드 하나로 (관리자가 토큰을 놓는다)
+
+제주연구원 PC에 `jaix-setup.exe`로 설치할 때 쓰는 경로입니다. 설계 원문은 [jaix-kit `docs/design-hermes-unattended.md`](https://github.com/jeju-inst/jaix-kit/blob/main/docs/design-hermes-unattended.md) §3.1에 있고, 2026-10-30 사용자가 승인했습니다. 위 3번(방문)과 **Collaborator 추가 단계가 없습니다.** 구성원은 토큰을 직접 복사하지 않습니다.
+
+1. 2번까지는 같습니다. 앱을 만들고 설치한 뒤 App-Level Token을 발급합니다. Collaborator는 추가하지 않습니다.
+2. 관리자가 studio에서 다음을 실행합니다. 봇 토큰과 앱 수준 토큰을 숨김 입력으로 붙여 넣으면 슬랙에 확인한 뒤 1회용 **연결 코드**(`JX-…`)를 출력합니다.
+
+   ```sh
+   jaix hermes handoff <아이디> --user <구성원 멤버 ID U…>
+   ```
+
+   - 묶음은 studio의 jaix 배포처(`jaix.namun.net`)에만 최대 72시간 머뭅니다. 원내 IP에서 한 번 받아 가면 바로 지워집니다.
+   - 토큰은 슬랙 메시지나 메일로 보내지 않습니다. **연결 코드는 슬랙 DM으로 보내도 됩니다.** 코드는 토큰이 아니고, 원내망에서 한 번만 쓸 수 있으며, 남이 먼저 쓰면 구성원 설치가 "이미 사용됨"으로 실패해서 드러납니다.
+3. 구성원은 `jaix-setup.exe`에서 "슬랙으로도 쓰기"를 고르고 연결 코드를 붙여 넣습니다. jaix가 Hermes 설치, `setup_pc.py --secrets-file`(무인), 게이트웨이 등록까지 합니다.
+
+**유출이 의심되거나 퇴사·PC 교체 때**: 앱 설정에서 *OAuth & Permissions → Revoke Tokens*, *Basic Information → App-Level Tokens → Revoke*를 누르고 재설치한 뒤 `handoff`를 다시 합니다. 급하면 앱을 지웁니다.
+
+`setup_pc.py`의 무인 옵션:
+- `--secrets-file f.json`: `bot_token`·`app_token`을 담은 파일입니다. 읽는 즉시 지웁니다. 토큰을 명령줄에 싣지 않습니다.
+- `--replace`: 이미 있는 슬랙 토큰을 묻지 않고 바꿉니다. 이 옵션 없이 무인으로 돌리면 멈춥니다.
+- `--yes`: 봇 이름이 `Hermes-<아이디>`가 아니어도 계속합니다.
+- 무인에서는 `.env`를 바꾸기 전에 `.env.bak-<시각>`으로 백업합니다. `hermes gateway install`이 실패하면 오류로 끝납니다. 이때 게이트웨이는 입력을 받지 않으므로 Windows에서 UAC 없이 시작프로그램 폴더로 등록됩니다.
+
 ## 막혔을 때
 
 | 증상 | 원인 | 할 일 |
