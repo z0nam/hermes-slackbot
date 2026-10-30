@@ -114,6 +114,8 @@ class SetupPc(unittest.TestCase):
         self.assertTrue(self.sp.bot_name_matches({"user": "Hermes_alice"}, "alice"))
         self.assertFalse(self.sp.bot_name_matches({"user": "hermes-bob"}, "alice"))
         self.assertFalse(self.sp.bot_name_matches({}, "alice"))
+        self.assertTrue(self.sp.bot_name_matches({"user": "hermesalice"}, "alice"))  # Slack's real handle shape
+        self.assertFalse(self.sp.bot_name_matches({"user": "hermesbob"}, "alice"))
 
     def test_seen_markers(self):
         log = ("INFO slack-namespace: /hermes-alice -> /hermes handler registered\n"

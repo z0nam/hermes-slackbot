@@ -84,8 +84,11 @@ def backup_env(env_path: Path) -> Path | None:
 
 
 def bot_name_matches(auth: dict, ident: str) -> bool:
-    """auth.test 'user' is the bot user's handle; compare loosely. (pure — for tests)"""
-    return (auth.get("user") or "").lower().replace("_", "-") == f"hermes-{ident}"
+    """auth.test 'user' is the bot user's handle; Slack drops separators there (Hermes-jitest -> 'hermesjitest',
+    seen on a real app 2026-10-30), so compare with hyphens/underscores/dots removed. (pure — for tests)"""
+    def squash(v: str) -> str:
+        return "".join(c for c in v.lower() if c not in "-_. ")
+    return squash(auth.get("user") or "") == squash(f"hermes-{ident}")
 
 
 def markers(ident: str) -> dict:
