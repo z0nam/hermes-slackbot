@@ -3,6 +3,7 @@ No network: Slack calls are replaced with fakes."""
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -119,6 +120,91 @@ class SetupPc(unittest.TestCase):
                "INFO Slack connected as Hermes-alice\n")
         self.assertEqual(self.sp.seen_markers(log, "alice"), {"slash handler", "slack connected"})
         self.assertEqual(self.sp.seen_markers(log, "bob"), {"slack connected"})
+
+    # --- unattended (--secrets-file), used by jaix-setup ---------------------------------------
+    def _secrets(self, d, **over):
+        f = Path(d) / "s.json"
+        f.write_text(json.dumps({"bot_token": "xoxb-TEST-1", "app_token": "xapp-TEST-1", **over}), encoding="utf-8")
+        return f
+
+    def test_read_secrets_deletes_file_even_when_bad(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = self._secrets(d)
+            self.assertEqual(self.sp.read_secrets(f), ("xoxb-TEST-1", "xapp-TEST-1"))
+            self.assertFalse(f.exists())
+            bad = self._secrets(d, app_token="nope")
+            with self.assertRaises(SystemExit):
+                self.sp.read_secrets(bad)
+            self.assertFalse(bad.exists())
+
+    def test_read_secrets_stops_when_delete_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = self._secrets(d)
+            with mock.patch.object(Path, "unlink", side_effect=PermissionError("held")), \
+                 self.assertRaises(SystemExit) as e:
+                self.sp.read_secrets(f)
+            self.assertIn("could not delete", str(e.exception))
+
+    def test_backup_env_copies_before_change(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            self.assertIsNone(self.sp.backup_env(env))
+            env.write_text("A=1\n", encoding="utf-8")
+            self.assertEqual(self.sp.backup_env(env).read_text(encoding="utf-8"), "A=1\n")
+
+    def _run_main(self, d, argv, env_text="", gw_code=0):
+        env = Path(d) / ".env"
+        if env_text:
+            env.write_text(env_text, encoding="utf-8")
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append((cmd, kw))
+            return NS(returncode=gw_code if "gateway" in cmd else 0, stdout="", stderr="boom")
+
+        def fake_slack(method, token):
+            return {"ok": True, "user": "hermes-alice", "team": "T"}
+
+        with mock.patch.object(self.sp.install, "run", side_effect=lambda *a: str(env) if a[:2] == ("config", "env-path") else ""), \
+             mock.patch.object(self.sp, "slack", side_effect=fake_slack), \
+             mock.patch.object(self.sp.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(self.sp.shutil, "which", return_value="hermes"), \
+             mock.patch.object(self.sp, "wait_for_log", return_value=set(self.sp.markers("alice"))), \
+             mock.patch("builtins.input", side_effect=AssertionError("asked")), \
+             mock.patch.object(self.sp.getpass, "getpass", side_effect=AssertionError("asked")), \
+             mock.patch.object(sys, "argv", ["setup_pc.py", "alice", "--user", "U123", *argv]):
+            self.sp.main()
+        return env, calls
+
+    def test_unattended_never_asks_and_writes_env(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = self._secrets(d)
+            env, calls = self._run_main(d, ["--secrets-file", str(f)])
+            text = env.read_text(encoding="utf-8")
+            self.assertIn("SLACK_BOT_TOKEN=xoxb-TEST-1", text)
+            self.assertIn("SLACK_ALLOWED_USERS=U123", text)
+            self.assertFalse(f.exists())
+            gw = [c for c in calls if "gateway" in c[0]][0]
+            self.assertIn("--start-on-login", gw[0])
+            self.assertIs(gw[1]["stdin"], self.sp.subprocess.DEVNULL)  # no UAC question -> Startup folder
+
+    def test_unattended_keeps_existing_token_without_replace(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = self._secrets(d)
+            with self.assertRaises(SystemExit) as e:
+                self._run_main(d, ["--secrets-file", str(f)], env_text="SLACK_BOT_TOKEN=xoxb-OLD\n")
+            self.assertIn("--replace", str(e.exception))
+            self.assertFalse(f.exists())
+            env, _ = self._run_main(d, ["--secrets-file", str(self._secrets(d)), "--replace"],
+                                    env_text="SLACK_BOT_TOKEN=xoxb-OLD\n")
+            self.assertIn("xoxb-TEST-1", env.read_text(encoding="utf-8"))
+            self.assertTrue(list(Path(d).glob(".env.bak-*")))
+
+    def test_unattended_gateway_install_failure_is_fatal(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(SystemExit) as e:
+                self._run_main(d, ["--secrets-file", str(self._secrets(d))], gw_code=1)
+            self.assertIn("gateway install", str(e.exception))
 
 
 if __name__ == "__main__":

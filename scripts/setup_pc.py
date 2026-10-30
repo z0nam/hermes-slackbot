@@ -2,14 +2,21 @@
 """Teammate PC, one command: connect this Hermes to the Hermes-<id> app the admin already created.
 
     python setup_pc.py <id> --user U…        # asks for the two tokens (input hidden)
+    python setup_pc.py <id> --user U… --secrets-file f.json [--replace] [--yes]   # unattended (jaix-setup)
 
 Steps: check both tokens against Slack (the bot token must belong to Hermes-<id>), write
 SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_ALLOWED_USERS to the Hermes .env, install the kit
 plugins (install.py), register and restart the gateway, then wait for the gateway log to show
 the slash handler and the Slack connection. Token values are never printed.
 See docs/admin-provision.ko.md for the admin side. Stdlib only; written for Windows PowerShell.
+
+Unattended (--secrets-file): the JSON file holds bot_token/app_token; it is read and deleted at once,
+so tokens never sit on argv. Nothing is asked: an existing Slack token is replaced only with --replace,
+a bot-name mismatch continues only with --yes, and a failed `hermes gateway install` is an error
+(the gateway gets no stdin, so Hermes takes its no-UAC Startup-folder path on Windows).
 """
 import argparse
+import datetime
 import getpass
 import json
 import shutil
@@ -46,6 +53,36 @@ def ask_token(label: str, prefix: str) -> str:
     sys.exit("giving up: token not entered")
 
 
+def read_secrets(path: Path) -> tuple[str, str]:
+    """bot/app tokens from a one-shot JSON file, deleted right after reading (even when malformed)."""
+    try:
+        data, err = json.loads(path.read_text(encoding="utf-8-sig")), None
+    except (OSError, ValueError) as e:
+        data, err = {}, e
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:  # tokens would stay on disk — stop so the caller cleans up
+        sys.exit(f"could not delete secrets file {path}: {type(e).__name__}; remove it by hand")
+    if err is not None:
+        sys.exit(f"could not read secrets file: {type(err).__name__}")
+    bot, app = str(data.get("bot_token", "")).strip(), str(data.get("app_token", "")).strip()
+    if not bot.startswith("xoxb-") or not app.startswith("xapp-"):
+        sys.exit("secrets file must hold bot_token (xoxb-…) and app_token (xapp-…)")
+    return bot, app
+
+
+def backup_env(env_path: Path) -> Path | None:
+    """Copy .env aside before we change it (same folder, same permissions as the original)."""
+    if not env_path.exists():
+        return None
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = env_path.with_name(f"{env_path.name}.bak-{stamp}")
+    shutil.copy2(env_path, dst)
+    return dst
+
+
 def bot_name_matches(auth: dict, ident: str) -> bool:
     """auth.test 'user' is the bot user's handle; compare loosely. (pure — for tests)"""
     return (auth.get("user") or "").lower().replace("_", "-") == f"hermes-{ident}"
@@ -80,7 +117,12 @@ def main() -> None:
     ap.add_argument("--user", required=True, help="owner's Slack member ID (U…); the only allowed user")
     ap.add_argument("--home-channel", help="optional SLACK_HOME_CHANNEL (C…/D…) for alerts")
     ap.add_argument("--no-restart", action="store_true", help="write settings only; don't touch the gateway")
+    ap.add_argument("--secrets-file", type=Path,
+                    help="unattended: JSON with bot_token/app_token; read then deleted (never pass tokens on argv)")
+    ap.add_argument("--replace", action="store_true", help="replace an existing Slack token without asking")
+    ap.add_argument("--yes", action="store_true", help="continue without asking when the bot name is not Hermes-<id>")
     a = ap.parse_args()
+    unattended = a.secrets_file is not None
     ident = a.id.strip().lower()
     if not make_manifest.ID_RE.match(ident):
         sys.exit(f"bad id {ident!r}: use the same id the admin gave you")
@@ -90,11 +132,13 @@ def main() -> None:
     env_path = Path(install.run("config", "env-path"))
     print(f"Hermes settings: {env_path}")
     existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    if any(line.split("=", 1)[0].strip() == "SLACK_BOT_TOKEN" for line in existing.splitlines()):
-        if input("A Slack bot token is already set. Replace it? [y/N] ").strip().lower() != "y":
-            sys.exit("stopped; nothing changed")
+    secrets = read_secrets(a.secrets_file) if unattended else None
+    if any(line.split("=", 1)[0].strip() == "SLACK_BOT_TOKEN" for line in existing.splitlines()) and not a.replace:
+        if unattended or input("A Slack bot token is already set. Replace it? [y/N] ").strip().lower() != "y":
+            sys.exit("stopped; a Slack bot token is already set (use --replace)" if unattended
+                     else "stopped; nothing changed")
 
-    bot = ask_token("Bot User OAuth Token", "xoxb-")
+    bot = secrets[0] if secrets else ask_token("Bot User OAuth Token", "xoxb-")
     try:
         auth = slack("auth.test", bot)
     except OSError as e:
@@ -103,11 +147,11 @@ def main() -> None:
         sys.exit(f"bot token rejected by Slack: {auth.get('error')}")
     if not bot_name_matches(auth, ident):
         print(f"  warning: this token belongs to bot '{auth.get('user')}', not Hermes-{ident}")
-        if input("  continue anyway? [y/N] ").strip().lower() != "y":
+        if not a.yes and (unattended or input("  continue anyway? [y/N] ").strip().lower() != "y"):
             sys.exit("stopped; nothing changed")
     print(f"  ok: bot {auth.get('user')} in workspace {auth.get('team')}")
 
-    app = ask_token("App-Level Token", "xapp-")
+    app = secrets[1] if secrets else ask_token("App-Level Token", "xapp-")
     try:
         conn = slack("apps.connections.open", app)
     except OSError as e:
@@ -116,6 +160,9 @@ def main() -> None:
         sys.exit(f"app-level token rejected by Slack: {conn.get('error')} (it needs the connections:write scope)")
     print("  ok: app-level token can open Socket Mode")
 
+    saved = backup_env(env_path)
+    if saved:
+        print(f"  backed up {env_path.name} → {saved.name}")
     install.set_env(env_path, "SLACK_BOT_TOKEN", bot)
     install.set_env(env_path, "SLACK_APP_TOKEN", app)
     install.set_env(env_path, "SLACK_ALLOWED_USERS", a.user)
@@ -132,10 +179,15 @@ def main() -> None:
 
     log = env_path.parent / "logs" / "gateway.log"
     offset = log.stat().st_size if log.exists() else 0
-    install_out = subprocess.run([shutil.which("hermes"), "gateway", "install"],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
+    gw_args = ["--start-now", "--start-on-login"] if unattended else []
+    install_out = subprocess.run([shutil.which("hermes"), "gateway", "install", *gw_args],
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                 stdin=subprocess.DEVNULL if unattended else None)
     if install_out.returncode != 0:
-        print(f"  note: `hermes gateway install` returned {install_out.returncode}:\n{install_out.stderr or install_out.stdout}")
+        detail = f"`hermes gateway install` returned {install_out.returncode}:\n{install_out.stderr or install_out.stdout}"
+        if unattended:
+            sys.exit(detail)
+        print(f"  note: {detail}")
     install.run("gateway", "restart")
     print(f"  gateway restarted; waiting up to {WAIT_SECONDS}s for {log.name} …")
     found = wait_for_log(log, offset, ident)
