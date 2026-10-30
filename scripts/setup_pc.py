@@ -56,14 +56,17 @@ def ask_token(label: str, prefix: str) -> str:
 def read_secrets(path: Path) -> tuple[str, str]:
     """bot/app tokens from a one-shot JSON file, deleted right after reading (even when malformed)."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data, err = json.loads(path.read_text(encoding="utf-8-sig")), None
     except (OSError, ValueError) as e:
-        sys.exit(f"could not read secrets file: {type(e).__name__}")
-    finally:
-        try:
-            path.unlink()
-        except OSError:
-            pass
+        data, err = {}, e
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:  # tokens would stay on disk — stop so the caller cleans up
+        sys.exit(f"could not delete secrets file {path}: {type(e).__name__}; remove it by hand")
+    if err is not None:
+        sys.exit(f"could not read secrets file: {type(err).__name__}")
     bot, app = str(data.get("bot_token", "")).strip(), str(data.get("app_token", "")).strip()
     if not bot.startswith("xoxb-") or not app.startswith("xapp-"):
         sys.exit("secrets file must hold bot_token (xoxb-…) and app_token (xapp-…)")

@@ -137,6 +137,14 @@ class SetupPc(unittest.TestCase):
                 self.sp.read_secrets(bad)
             self.assertFalse(bad.exists())
 
+    def test_read_secrets_stops_when_delete_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = self._secrets(d)
+            with mock.patch.object(Path, "unlink", side_effect=PermissionError("held")), \
+                 self.assertRaises(SystemExit) as e:
+                self.sp.read_secrets(f)
+            self.assertIn("could not delete", str(e.exception))
+
     def test_backup_env_copies_before_change(self):
         with tempfile.TemporaryDirectory() as d:
             env = Path(d) / ".env"
