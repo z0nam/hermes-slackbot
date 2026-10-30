@@ -147,6 +147,12 @@ class SetupPc(unittest.TestCase):
                 self.sp.read_secrets(f)
             self.assertIn("could not delete", str(e.exception))
 
+    def test_dm_channel_none_when_slack_refuses(self):
+        with mock.patch.object(self.sp, "slack", return_value={"ok": False, "error": "missing_scope"}):
+            self.assertIsNone(self.sp.dm_channel("xoxb-TEST", "U1"))
+        with mock.patch.object(self.sp, "slack", side_effect=OSError("down")):
+            self.assertIsNone(self.sp.dm_channel("xoxb-TEST", "U1"))
+
     def test_backup_env_copies_before_change(self):
         with tempfile.TemporaryDirectory() as d:
             env = Path(d) / ".env"
@@ -164,7 +170,10 @@ class SetupPc(unittest.TestCase):
             calls.append((cmd, kw))
             return NS(returncode=gw_code if "gateway" in cmd else 0, stdout="", stderr="boom")
 
-        def fake_slack(method, token):
+        def fake_slack(method, token, **params):
+            if method == "conversations.open":
+                self.assertEqual(params, {"users": "U123"})
+                return {"ok": True, "channel": {"id": "D0TEST"}}
             return {"ok": True, "user": "hermes-alice", "team": "T"}
 
         with mock.patch.object(self.sp.install, "run", side_effect=lambda *a: str(env) if a[:2] == ("config", "env-path") else ""), \
@@ -185,6 +194,7 @@ class SetupPc(unittest.TestCase):
             text = env.read_text(encoding="utf-8")
             self.assertIn("SLACK_BOT_TOKEN=xoxb-TEST-1", text)
             self.assertIn("SLACK_ALLOWED_USERS=U123", text)
+            self.assertIn("SLACK_HOME_CHANNEL=D0TEST", text)  # no "No home channel is set" notice on first chat
             self.assertFalse(f.exists())
             gw = [c for c in calls if "gateway" in c[0]][0]
             self.assertIn("--start-on-login", gw[0])

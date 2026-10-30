@@ -36,8 +36,8 @@ API = "https://slack.com/api/"
 WAIT_SECONDS = 120
 
 
-def slack(method: str, token: str) -> dict:
-    req = urllib.request.Request(API + method, data=b"",
+def slack(method: str, token: str, **params: str) -> dict:
+    req = urllib.request.Request(API + method, data=urllib.parse.urlencode(params).encode("ascii"),
                                  headers={"Authorization": f"Bearer {token}",
                                           "Content-Type": "application/x-www-form-urlencoded"})
     with urllib.request.urlopen(req, timeout=20) as r:
@@ -81,6 +81,16 @@ def backup_env(env_path: Path) -> Path | None:
     dst = env_path.with_name(f"{env_path.name}.bak-{stamp}")
     shutil.copy2(env_path, dst)
     return dst
+
+
+def dm_channel(bot: str, user: str) -> str | None:
+    """The bot's DM channel with the owner (D…), used as SLACK_HOME_CHANNEL so Hermes doesn't open the
+    first chat with a "No home channel is set" notice. None when Slack refuses (e.g. missing im:write)."""
+    try:
+        r = slack("conversations.open", bot, users=user)
+    except OSError:
+        return None
+    return (r.get("channel") or {}).get("id") if r.get("ok") else None
 
 
 def bot_name_matches(auth: dict, ident: str) -> bool:
@@ -169,9 +179,12 @@ def main() -> None:
     install.set_env(env_path, "SLACK_BOT_TOKEN", bot)
     install.set_env(env_path, "SLACK_APP_TOKEN", app)
     install.set_env(env_path, "SLACK_ALLOWED_USERS", a.user)
-    if a.home_channel:
-        install.set_env(env_path, "SLACK_HOME_CHANNEL", a.home_channel)
-    print("  wrote SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_ALLOWED_USERS" + (", SLACK_HOME_CHANNEL" if a.home_channel else ""))
+    home = a.home_channel or dm_channel(bot, a.user)
+    if home:
+        install.set_env(env_path, "SLACK_HOME_CHANNEL", home)
+    else:
+        print("  note: could not open the owner's DM to set SLACK_HOME_CHANNEL; Hermes will ask once (/sethome)")
+    print("  wrote SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_ALLOWED_USERS" + (", SLACK_HOME_CHANNEL" if home else ""))
 
     r = subprocess.run([sys.executable, str(HERE / "install.py"), ident])
     if r.returncode != 0:
