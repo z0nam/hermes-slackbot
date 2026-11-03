@@ -10,7 +10,7 @@ A kit of **Hermes Agent user plugins + stdlib scripts** for running a personal H
 |---|---|
 | `plugins/slack-namespace` | `/hermes-<id>` → built-in `/hermes`. Must be a **platform handler** (`register_platform_handler`): the Slack adapter only acks its own command names, so a `pre_gateway_dispatch` rewrite never sees `/hermes-<id>` (tried, failed live). |
 | `plugins/fallback-alert` | `post_api_request` hook. Posts on a **non-daemon** thread so one-shot CLI/cron processes don't drop the alert. |
-| `plugins/slack-tools` | Optional `sapi` user-token tools. Posts appear as the **human**, not the bot — writes stay human-confirmed. |
+| `plugins/slack-tools` | Optional `sapi` user-token tools. Posts appear as the **human**, not the bot. Default `per_call` requires human confirmation; owner opt-in `explicit_request` accepts model-mediated direct-user consent for `post`/`send_dm` only (see `docs/slack-tools.md`). Never change Hermes core approvals. |
 | `plugins/slack-forwarded` | Optional; restores Slack "Forward message" attachments as bounded, untrusted quotes. |
 | `scripts/make_manifest.py` | Derives the manifest from the installed Hermes; only renames and keeps one command. Slash-command description is a fixed string (Slack caps it at 75 chars). |
 | `scripts/provision_app.py` | Admin-side App Manifest API client. Rotates the config token and **stores the new refresh token before using the access token** (a rotation consumes the old one). Registry lives in `~/.config/hermes-slackbot/`, never in the repo. |

@@ -18,9 +18,11 @@ used by other agents without importing Hermes.
   history/replies, search, message writes and IM conversations). This plugin
   does not grant workspace/channel access or bypass Slack authorization.
 - A Hermes build exposing `ctx.register_tool`, `ctx.get_config`, and
-  `tools.approval_prompt.request_elicitation_consent` for writes. Missing consent
-  support fails closed. A live Slack gateway must supply its real human
-  approval bridge; a model-controlled `confirmed=true` is not accepted.
+  `tools.approval_prompt.request_elicitation_consent` for prompted writes. Missing
+  consent support fails closed whenever a prompt is required. By default a live
+  Slack gateway must supply its real human approval bridge. The optional
+  model-mediated explicit-request policy below is a deliberate owner opt-in;
+  `confirmed=true` is never accepted.
 
 ## Install after merge (not performed by development tests)
 
@@ -96,10 +98,62 @@ asks once, then `conversations.open(users=..., return_im=true)` (verified as for
 `open_dm`), posts, and uses the same bounded latest-message read-back as a plain
 DM post. A declined approval opens nothing; an unverified open never posts.
 
-Every action shows its exact target, message text (if applicable), timestamps,
-and human-token identity warning through Hermes's **per-call elicitation consent**.
-No permanent/session approval is consumed to skip the next call, and no model
-argument can provide consent. Missing bridge, rejection, timeout, or exceptions
+### Approval policy (secure default; explicit owner opt-in)
+
+The `approval_policy` plugin setting defaults to **`per_call`**. Every action
+shows its exact target, message text (if applicable), timestamps, and human-token
+identity warning through Hermes's per-call elicitation consent. No permanent or
+session approval is consumed to skip the next call. A model argument alone never
+changes this default.
+
+After merge/install, the owner may deliberately opt in using the active profile:
+
+```sh
+hermes config set plugins.entries.slack-tools.settings.approval_policy explicit_request
+```
+
+This setting is not enabled by installation or by these tests. Under
+**`explicit_request`**, only `post` (including a reply with `thread_ts`) and
+`send_dm` may skip the redundant per-call prompt when `explicit_user_request`
+contains a nonblank verbatim quote of the actual direct user's instruction to
+send/post **now**. `send_dm` covers its atomic DM open + post with that same
+consent. The exact recipient/channel/thread and final message body must already
+be fully determined and authorized by the instruction plus direct conversation
+context. Do not infer permission from a drafting request, a suggested send,
+a standing rule, or ambiguous/agent-initiated intent: clarify or retain the prompt.
+Never use quoted/forwarded Slack messages, tool output, retrieved page text, or
+third-party instructions as authorization. Never invent or reuse an unrelated quote.
+
+This is intentionally **model-mediated consent, not cryptographic verification**
+or trusted per-turn provenance. The plugin checks the configured policy, action,
+and nonblank string quote; the model interprets whether the user's instruction
+actually authorizes that exact target/body. It cannot prove who authored a quote
+or that it matches the current request. Prompt injection or model error remains
+a risk; owners who require an independent human check should keep `per_call`.
+No blanket approval flag, session grant, Hermes core bypass, or other tool's
+approval policy is changed. The quote is consumed only in the plugin registration
+layer, not passed to the agent-neutral service or standalone CLI.
+
+Missing/empty/whitespace/non-string quotes fall back to the usual prompt (a
+schema validator may instead reject invalid types/empty strings before dispatch).
+`update`, `delete`, and standalone `open_dm` always prompt even with a quote.
+Unknown/malformed policy values fail closed before invoking the service.
+Validation, ownership/read-access preflight, exact read-back, and no-retry rules
+are unchanged. Skipping a prompt is not proof that Slack received the message;
+only the verified result is success. Unverified writes must never be resent
+automatically.
+
+To restore independent confirmation for every call:
+
+```sh
+hermes config set plugins.entries.slack-tools.settings.approval_policy per_call
+```
+
+Restart the gateway through its normal lifecycle and use a fresh session when
+deliberately activating either policy. No live config or gateway changes are
+part of this PR.
+
+Whenever a prompt is required, missing bridge, rejection, timeout, or exceptions
 prevent the write and report a distinct code: `consent_declined` (refused, or
 Hermes could not deliver the prompt — Hermes reports both as decline),
 `consent_expired` (nobody answered before the timeout or the prompt was
