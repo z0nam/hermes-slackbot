@@ -8,6 +8,7 @@ The admin owns every app, so the teammate never touches api.slack.com except to 
     python provision_app.py create <id> --user U…  # create Hermes-<id>, print the remaining clicks
     python provision_app.py list                 # apps this machine created
     python provision_app.py update-all [--dry-run]  # re-apply the kit manifest to every app
+    python provision_app.py rename <old> <new> [--dry-run]  # Hermes-<old> -> Hermes-<new>, same app
 
 App configuration tokens expire after 12 hours, but each rotation also returns a new refresh
 token, so the stored refresh token keeps working for as long as it is rotated. Every run rotates
@@ -206,6 +207,47 @@ def changed_paths(old, new, path="") -> list:
     return [] if old == new else [path or "/"]
 
 
+def rename_manifest(cur: dict, old: str, new: str) -> dict:
+    """Current manifest with only the name, bot name, command and the id in the description
+    changed — nothing else, so scopes stay the same and no reinstall is needed. (pure — for tests)"""
+    m = make_manifest.namespace(cur, new)
+    info = m.get("display_information", {})
+    if info.get("description"):
+        info["description"] = info["description"].replace(f"({old})", f"({new})")
+    return m
+
+
+def cmd_rename(a) -> None:
+    old, new = a.old.strip().lower(), a.new.strip().lower()
+    reg = load_registry()
+    if old not in reg:
+        sys.exit(f"Hermes-{old} is not registered on this machine (see `list`).")
+    if new in reg:
+        sys.exit(f"Hermes-{new} is already registered as {reg[new]['app_id']}.")
+    if not make_manifest.ID_RE.match(new):
+        sys.exit(f"id {new!r}: use 1-21 chars of a-z, 0-9, '-', '_' (lowercase, start with a letter/digit)")
+    row = reg[old]
+    tok = access_token()
+    cur = check(call("apps.manifest.export", token=tok, app_id=row["app_id"]), f"export {old}")["manifest"]
+    m = rename_manifest(cur, old, new)
+    print(f"Hermes-{old} -> Hermes-{new}  ({row['app_id']}): " + ", ".join(changed_paths(cur, m)))
+    if a.dry_run:
+        return
+    res = check(call("apps.manifest.update", token=tok, app_id=row["app_id"],
+                     manifest=json.dumps(m, ensure_ascii=False)), f"update {old}")
+    reg[new] = dict(row, renamed_from=old, renamed=time.strftime("%Y-%m-%d"))
+    del reg[old]
+    save_registry(reg)
+    if res.get("permissions_updated"):
+        print(f"  scopes changed unexpectedly: reinstall at {links(row['app_id'])[0][1]} and re-copy the tokens")
+    else:
+        print("  updated; scopes unchanged, so the installed tokens keep working (no reinstall)")
+    print(f"\nOn the owner's PC, switch the slash command to /hermes-{new} and restart the gateway:\n"
+          f"  jaix hermes rename {new}        (JAIX kit)\n"
+          f"  or, from the kit folder:  python scripts/install.py {new}   then  hermes gateway restart\n"
+          f"Until then /hermes-{new} answers \"app did not respond\"; DMs keep working.")
+
+
 def cmd_update_all(a) -> None:
     reg = load_registry()
     if not reg:
@@ -236,8 +278,13 @@ def main() -> None:
     sub.add_parser("list", help="apps created from this machine")
     u = sub.add_parser("update-all", help="re-apply the kit manifest to every registered app")
     u.add_argument("--dry-run", action="store_true", help="show what would change, update nothing")
+    r = sub.add_parser("rename", help="rename Hermes-<old> to Hermes-<new> in place (same app and tokens)")
+    r.add_argument("old")
+    r.add_argument("new")
+    r.add_argument("--dry-run", action="store_true", help="show what would change, update nothing")
     a = ap.parse_args()
-    {"token": cmd_token, "create": cmd_create, "list": cmd_list, "update-all": cmd_update_all}[a.cmd](a)
+    {"token": cmd_token, "create": cmd_create, "list": cmd_list, "update-all": cmd_update_all,
+     "rename": cmd_rename}[a.cmd](a)
 
 
 if __name__ == "__main__":
