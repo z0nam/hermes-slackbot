@@ -93,6 +93,65 @@ class Provision(unittest.TestCase):
         self.assertEqual(len(hits), 2)
         self.assertEqual(slept, [7])
 
+    EXPORTED = {
+        "display_information": {"name": "Hermes-alice", "description": "Personal Hermes agent (alice) — only its owner can use it"},
+        "features": {"bot_user": {"display_name": "Hermes-alice"},
+                     "slash_commands": [{"command": "/hermes-alice", "url": "https://x/slack"}]},
+        "oauth_config": {"scopes": {"bot": ["chat:write", "commands"]}},
+        "settings": {"socket_mode_enabled": True},
+    }
+
+    def test_rename_manifest_changes_only_names(self):
+        m = self.pa.rename_manifest(self.EXPORTED, "alice", "al")
+        self.assertEqual(m["display_information"]["name"], "Hermes-al")
+        self.assertIn("(al)", m["display_information"]["description"])
+        self.assertEqual(m["features"]["bot_user"]["display_name"], "Hermes-al")
+        self.assertEqual([c["command"] for c in m["features"]["slash_commands"]], ["/hermes-al"])
+        self.assertEqual(m["features"]["slash_commands"][0]["url"], "https://x/slack")
+        self.assertEqual(m["oauth_config"], self.EXPORTED["oauth_config"])  # scopes untouched -> no reinstall
+        self.assertEqual(m["settings"], self.EXPORTED["settings"])
+        self.assertEqual(self.EXPORTED["display_information"]["name"], "Hermes-alice")  # input untouched
+
+    def _rename(self, dry_run=False, old="alice", new="al"):
+        self.pa.save_refresh("xoxe-1")
+        self.pa.save_registry({"alice": {"app_id": "A1", "user": "U1", "created": "2026-11-05"},
+                               "bob": {"app_id": "A2", "user": "U2", "created": "2026-11-05"}})
+        calls = []
+
+        def fake(method, **p):
+            calls.append((method, p.get("app_id")))
+            if method == "tooling.tokens.rotate":
+                return {"ok": True, "token": "t", "refresh_token": "xoxe-2"}
+            if method == "apps.manifest.export":
+                return {"ok": True, "manifest": self.EXPORTED}
+            if method == "apps.manifest.update":
+                self.assertEqual(json.loads(p["manifest"])["features"]["slash_commands"][0]["command"], "/hermes-al")
+                return {"ok": True, "app_id": p["app_id"], "permissions_updated": False}
+            return {"ok": True}
+
+        with mock.patch.object(self.pa, "call", fake), mock.patch("builtins.print"):
+            self.pa.cmd_rename(NS(old=old, new=new, dry_run=dry_run))
+        return calls
+
+    def test_rename_updates_app_and_moves_registry_key(self):
+        calls = self._rename()
+        self.assertEqual([c[0] for c in calls], ["tooling.tokens.rotate", "apps.manifest.export", "apps.manifest.update"])
+        self.assertEqual(calls[-1][1], "A1")
+        reg = self.pa.load_registry()
+        self.assertNotIn("alice", reg)
+        self.assertEqual((reg["al"]["app_id"], reg["al"]["user"], reg["al"]["renamed_from"]), ("A1", "U1", "alice"))
+
+    def test_rename_dry_run_changes_nothing(self):
+        calls = self._rename(dry_run=True)
+        self.assertNotIn("apps.manifest.update", [c[0] for c in calls])
+        self.assertIn("alice", self.pa.load_registry())
+
+    def test_rename_refuses_unknown_taken_or_bad_ids(self):
+        for old, new in [("nobody", "x"), ("alice", "bob"), ("alice", "Bad Id")]:
+            with self.assertRaises(SystemExit):
+                self._rename(old=old, new=new)
+            self.assertIn("alice", self.pa.load_registry())
+
     def test_changed_paths(self):
         old = {"a": {"b": 1, "c": [1]}, "d": 1}
         new = {"a": {"b": 2, "c": [1]}, "e": 1}

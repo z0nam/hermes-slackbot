@@ -80,6 +80,21 @@ python3 scripts/provision_app.py update-all
 - 권한(스코프)이 바뀐 앱은 재설치 링크가 출력됩니다. 관리자가 눌러 재설치합니다.
 - 구성원 PC에서는 할 일이 없습니다. 토큰은 그대로 유지됩니다.
 
+## 6. 아이디 바꾸기 (관리자 + 구성원 PC)
+
+같은 앱의 이름과 명령만 바꿉니다. 앱을 새로 만들지 않으므로 토큰도 그대로 씁니다.
+
+```sh
+python3 scripts/provision_app.py rename <옛 아이디> <새 아이디> --dry-run   # 바뀔 항목만 보기
+python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
+```
+
+- 슬랙 쪽에서는 앱 이름·봇 이름·설명 속 아이디·슬래시 명령 네 가지만 바뀝니다. 권한(스코프)은 그대로라 재설치가 필요 없고, 설치된 토큰도 계속 유효합니다.
+- 레지스트리(`apps.json`)의 키도 새 아이디로 옮겨지고, `renamed_from`에 옛 아이디가 남습니다.
+- **구성원 PC에서 할 일**: `HERMES_SLACK_SLASH`를 새 명령으로 바꾸고 게이트웨이를 재시작합니다. JAIX 키트를 쓰는 PC는 `jaix hermes rename <새 아이디>`, 그 밖에는 키트 폴더에서 `python scripts/install.py <새 아이디>`를 실행한 뒤 `hermes gateway restart`를 실행합니다.
+  - 이 작업 전까지는 `/hermes-<새 아이디>`를 치면 "앱이 반응하지 않아 실패했습니다"가 뜹니다. DM은 계속 됩니다.
+- 슬랙이 봇의 내부 사용자 이름(`auth.test`의 `user`)은 옛 이름 그대로 둘 수 있습니다. 나중에 같은 PC에서 `setup_pc.py`를 새 아이디로 다시 돌리면 "봇 이름이 다르다"는 경고가 나올 수 있는데, 앱 ID가 같으면 그대로 진행해도 됩니다.
+
 ## jaix-setup 경로: 연결 코드 하나로 (관리자가 토큰을 놓는다)
 
 제주연구원 PC에 `jaix-setup.exe`로 설치할 때 쓰는 경로입니다. 설계 원문은 [jaix-kit `docs/design-hermes-unattended.md`](https://github.com/jeju-inst/jaix-kit/blob/main/docs/design-hermes-unattended.md) §3.1에 있고, 2026-10-30 사용자가 승인했습니다. 위 3번(방문)과 **Collaborator 추가 단계가 없습니다.** 구성원은 토큰을 직접 복사하지 않습니다.
