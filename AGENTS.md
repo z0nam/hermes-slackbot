@@ -12,10 +12,10 @@ A kit of **Hermes Agent user plugins + stdlib scripts** for running a personal H
 | `plugins/fallback-alert` | `post_api_request` hook. Posts on a **non-daemon** thread so one-shot CLI/cron processes don't drop the alert. |
 | `plugins/slack-tools` | Optional `sapi` user-token tools. Posts appear as the **human**, not the bot. Default `per_call` requires human confirmation; owner opt-in `explicit_request` accepts model-mediated direct-user consent for `post`/`send_dm` only (see `docs/slack-tools.md`). Never change Hermes core approvals. |
 | `plugins/slack-forwarded` | Optional; restores Slack "Forward message" attachments as bounded, untrusted quotes. |
-| `scripts/make_manifest.py` | Derives the manifest from the installed Hermes; only renames and keeps one command. Slash-command description is a fixed string (Slack caps it at 75 chars). |
+| `scripts/make_manifest.py` | Derives the manifest from the installed Hermes; only renames, keeps one command and adds `KIT_BOT_SCOPES` (`groups:write` for the owner's private channel, `chat:write.customize` for slack-model-display). `provision_app.py rename` deliberately does *not* add scopes. Slash-command description is a fixed string (Slack caps it at 75 chars). |
 | `scripts/provision_app.py` | Admin-side App Manifest API client. Rotates the config token and **stores the new refresh token before using the access token** (a rotation consumes the old one). Registry lives in `~/.config/hermes-slackbot/`, never in the repo. |
 | `scripts/setup_pc.py` | Teammate-side one-shot for an admin-created app; reuses `install.py`. Never prints token values. |
-| `scripts/install.py` | Resolves paths via `hermes config env-path` — never hardcode `~/.hermes` (Windows uses `%LOCALAPPDATA%\hermes`). |
+| `scripts/install.py` | Default plugins: slack-namespace, fallback-alert, slack-forwarded, slack-model-display (sets its `base_name` to `Hermes-<id>`). **Never add slack-tools to the defaults** — it acts with the owner's user token. Resolves paths via `hermes config env-path` — never hardcode `~/.hermes` (Windows uses `%LOCALAPPDATA%\hermes`). |
 
 ## Tests
 

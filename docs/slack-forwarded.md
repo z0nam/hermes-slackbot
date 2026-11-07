@@ -11,10 +11,9 @@ From a reviewed/merged checkout of this kit:
 ```sh
 # Existing bot: installs/enables only this plugin; leaves other plugins and .env unchanged
 python scripts/install.py --forwarded-only
-
-# Or opt in while installing the namespace/alert kit
-python scripts/install.py alice --with-forwarded
 ```
+
+A full kit install (`python scripts/install.py alice`) includes it by default since 2026-11; the old `--with-forwarded` flag is still accepted and does nothing extra.
 
 The installer resolves the active profile with `hermes config env-path`. It does **not** restart the gateway. When ready, apply with `hermes gateway restart`. Avoid linking a live plugin to an unmerged development worktree.
 

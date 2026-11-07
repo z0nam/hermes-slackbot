@@ -125,7 +125,7 @@ def save_registry(reg: dict) -> None:
 
 def kit_manifest(ident: str) -> dict:
     desc = f"Personal Hermes agent ({ident}) — only its owner can use it"
-    return make_manifest.namespace(make_manifest.hermes_manifest(f"Hermes-{ident}", desc), ident)
+    return make_manifest.kit_manifest(make_manifest.hermes_manifest(f"Hermes-{ident}", desc), ident)
 
 
 def setup_line(ident: str, user: str) -> str:
@@ -207,6 +207,28 @@ def changed_paths(old, new, path="") -> list:
     return [] if old == new else [path or "/"]
 
 
+def kit_changes(cur: dict, new: dict) -> list:
+    """What applying `new` would change, for update-all --dry-run. Hides keys only the server
+    side carries (export adds defaults like pkce_enabled or _metadata that the kit never sets)
+    and spells out bot-scope changes. (pure — for tests)"""
+    def at(m, path):
+        for k in path.strip("/").split("/"):
+            m = m.get(k) if isinstance(m, dict) else None
+        return m
+    out = []
+    for path in changed_paths(cur, new):
+        if path == "/_metadata" or at(new, path) is None:
+            continue
+        if path == "/oauth_config/scopes/bot":
+            old_s, new_s = set(at(cur, path) or []), set(at(new, path) or [])
+            delta = [f"+{x}" for x in sorted(new_s - old_s)] + [f"-{x}" for x in sorted(old_s - new_s)]
+            if not delta:
+                continue  # order only
+            path += " (" + " ".join(delta) + ")"
+        out.append(path)
+    return out
+
+
 def rename_manifest(cur: dict, old: str, new: str) -> dict:
     """Current manifest with only the name, bot name, command and the id in the description
     changed — nothing else, so scopes stay the same and no reinstall is needed. (pure — for tests)"""
@@ -253,17 +275,29 @@ def cmd_update_all(a) -> None:
     if not reg:
         sys.exit("No apps registered on this machine.")
     tok = access_token()
+    failed = []
     for ident, row in sorted(reg.items()):
         new = kit_manifest(ident)
+        # One unreachable app (deleted, or this admin lost access) must not stop the rest.
         if a.dry_run:
-            cur = check(call("apps.manifest.export", token=tok, app_id=row["app_id"]), f"export {ident}")["manifest"]
-            diff = changed_paths(cur, new)
+            res = call("apps.manifest.export", token=tok, app_id=row["app_id"])
+            if not res.get("ok"):
+                failed.append(f"{ident} ({res.get('error')})")
+                print(f"Hermes-{ident}: export failed: {res.get('error')}")
+                continue
+            diff = kit_changes(res["manifest"], new)
             print(f"Hermes-{ident}: " + (", ".join(diff) if diff else "no change"))
             continue
-        res = check(call("apps.manifest.update", token=tok, app_id=row["app_id"],
-                         manifest=json.dumps(new, ensure_ascii=False)), f"update {ident}")
+        res = call("apps.manifest.update", token=tok, app_id=row["app_id"],
+                   manifest=json.dumps(new, ensure_ascii=False))
+        if not res.get("ok"):
+            failed.append(f"{ident} ({res.get('error')})")
+            print(f"Hermes-{ident}: update failed: {res.get('error')}")
+            continue
         note = "  → scopes changed: reinstall at " + links(row["app_id"])[0][1] if res.get("permissions_updated") else ""
         print(f"Hermes-{ident}: updated{note}")
+    if failed:
+        sys.exit(f"{len(failed)} app(s) not {'checked' if a.dry_run else 'updated'}: " + ", ".join(failed))
 
 
 def main() -> None:

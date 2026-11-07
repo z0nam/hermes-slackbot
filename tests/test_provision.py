@@ -152,6 +152,39 @@ class Provision(unittest.TestCase):
                 self._rename(old=old, new=new)
             self.assertIn("alice", self.pa.load_registry())
 
+    def test_kit_changes_hides_server_defaults_and_spells_out_scopes(self):
+        cur = {"oauth_config": {"scopes": {"bot": ["chat:write", "commands"]}, "pkce_enabled": False},
+               "settings": {"is_mcp_enabled": False}, "display_information": {"name": "Hermes-a"}}
+        new = {"_metadata": {"major_version": 1}, "display_information": {"name": "Hermes-a"},
+               "oauth_config": {"scopes": {"bot": ["commands", "chat:write", "groups:write"]}}}
+        self.assertEqual(self.pa.kit_changes(cur, new), ["/oauth_config/scopes/bot (+groups:write)"])
+        new["oauth_config"]["scopes"]["bot"] = ["commands", "chat:write"]  # order only
+        self.assertEqual(self.pa.kit_changes(cur, new), [])
+        new["display_information"]["name"] = "Hermes-b"
+        self.assertEqual(self.pa.kit_changes(cur, new), ["/display_information/name"])
+
+    def test_update_all_continues_past_an_unreachable_app(self):
+        self.pa.save_refresh("xoxe-1")
+        self.pa.save_registry({"alice": {"app_id": "A1"}, "bob": {"app_id": "A2"}, "carol": {"app_id": "A3"}})
+        updated = []
+
+        def fake(method, **p):
+            if method == "tooling.tokens.rotate":
+                return {"ok": True, "token": "t", "refresh_token": "xoxe-2"}
+            if method == "apps.manifest.update":
+                if p["app_id"] == "A2":
+                    return {"ok": False, "error": "no_permission"}
+                updated.append(p["app_id"])
+                return {"ok": True, "permissions_updated": True}
+            return {"ok": True}
+
+        with mock.patch.object(self.pa, "call", fake), mock.patch("builtins.print"), \
+                mock.patch.object(self.pa, "kit_manifest", lambda ident: {"n": ident}):
+            with self.assertRaises(SystemExit) as cm:
+                self.pa.cmd_update_all(NS(dry_run=False))
+        self.assertEqual(updated, ["A1", "A3"])
+        self.assertIn("bob (no_permission)", str(cm.exception.code))
+
     def test_changed_paths(self):
         old = {"a": {"b": 1, "c": [1]}, "d": 1}
         new = {"a": {"b": 2, "c": [1]}, "e": 1}
