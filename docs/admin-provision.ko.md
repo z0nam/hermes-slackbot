@@ -95,6 +95,35 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
   - 이 작업 전까지는 `/hermes-<새 아이디>`를 치면 "앱이 반응하지 않아 실패했습니다"가 뜹니다. DM은 계속 됩니다.
 - 슬랙이 봇의 내부 사용자 이름(`auth.test`의 `user`)은 옛 이름 그대로 둘 수 있습니다. 나중에 같은 PC에서 `setup_pc.py`를 새 아이디로 다시 돌리면 "봇 이름이 다르다"는 경고가 나올 수 있는데, 앱 ID가 같으면 그대로 진행해도 됩니다.
 
+## 7. 키트 권한이 늘었을 때: 기존 앱 갱신 (2026-11, `groups:write`·`chat:write.customize`)
+
+키트 매니페스트에 봇 권한 두 개가 추가됐습니다. 그 전에 만든 앱은 아래 순서로 맞춥니다. **순서가 중요합니다.** 재설치(3단계)를 마치기 전에 구성원 PC에 새 플러그인을 깔면, `slack-model-display`가 권한 없이 보낸 사람 이름을 바꾸려 하게 됩니다.
+
+- `groups:write`: 봇이 주인 전용 비공개 채널 `hermes-<아이디>`를 만들고 주인을 초대합니다(`conversations.create`, `conversations.invite`).
+- `chat:write.customize`: 답변의 보낸 사람 이름을 `Hermes-<아이디> (모델명)`으로 바꿉니다(`slack-model-display`).
+
+1. studio의 키트를 최신으로 맞춥니다: `git -C ~/dev/hermes-slackbot pull`
+2. 바뀔 항목을 확인합니다. 앱마다 `/oauth_config/scopes/bot (+chat:write.customize +groups:write)`만 나와야 합니다. 다른 항목이 나오면 멈추고 확인합니다.
+
+   ```sh
+   python3 scripts/provision_app.py update-all --dry-run
+   ```
+
+   - 열 수 없는 앱(지운 앱, 관리자가 협업자에서 빠진 앱)은 `export failed: no_permission`으로 표시되고, 나머지는 계속 확인합니다.
+3. 적용한 뒤 재설치합니다.
+
+   ```sh
+   python3 scripts/provision_app.py update-all
+   ```
+
+   - 매니페스트만 바뀐 상태에서는 기존 토큰이 예전 권한 그대로 계속 동작합니다. 새 권한은 재설치해야 붙습니다.
+   - 앱마다 `→ scopes changed: reinstall at https://api.slack.com/apps/<A…>/install-on-team`가 출력됩니다. 관리자가 하나씩 열어 **허용**을 누릅니다. 앱 승인제가 켜져 있으면 관리자 승인도 거칩니다.
+4. 토큰이 그대로인지 확인합니다. 같은 워크스페이스에 재설치하면 새 권한이 기존 설치에 더해지고, 봇 토큰(`xoxb-`)과 앱 수준 토큰(`xapp-`)은 보통 그대로입니다. 그래서 **원칙적으로 토큰 재복사는 필요 없습니다.**
+   - 첫 앱을 재설치한 직후, 그 구성원 봇에 DM을 보내 답이 오는지 봅니다. 답이 오면 나머지도 같습니다.
+   - 답이 없고 구성원 PC 게이트웨이 로그에 `invalid_auth`·`token_revoked`가 보이면 토큰이 바뀐 것입니다. 이때만 `jaix hermes handoff <아이디> --user <U…>`(또는 Collaborator 복사)로 토큰을 다시 놓습니다.
+5. 구성원 PC를 갱신합니다. JAIX 키트를 쓰는 PC는 jaix 업데이트로 반영됩니다. 그 밖에는 키트 폴더에서 `python scripts/install.py <아이디>`를 실행한 뒤 `hermes gateway restart`를 합니다. `slack-forwarded`·`slack-model-display`가 설치되고 `base_name`이 `Hermes-<아이디>`로 맞춰집니다.
+   - 아직 재설치하지 않은 앱이면 `--no-model-display`를 붙입니다.
+
 ## jaix-setup 경로: 연결 코드 하나로 (관리자가 토큰을 놓는다)
 
 제주연구원 PC에 `jaix-setup.exe`로 설치할 때 쓰는 경로입니다. 설계 원문은 [jaix-kit `docs/design-hermes-unattended.md`](https://github.com/jeju-inst/jaix-kit/blob/main/docs/design-hermes-unattended.md) §3.1에 있고, 2026-10-30 사용자가 승인했습니다. 위 3번(방문)과 **Collaborator 추가 단계가 없습니다.** 구성원은 토큰을 직접 복사하지 않습니다.

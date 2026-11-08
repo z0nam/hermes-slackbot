@@ -25,12 +25,12 @@ Each person gets **`Hermes-<id>`** as the app name and **one** command, **`/herm
 
 | Piece | What it is |
 |---|---|
-| `scripts/make_manifest.py` | Builds the Slack app manifest from **your installed Hermes** (scopes/events stay in sync) and swaps in the per-user name + single command. |
+| `scripts/make_manifest.py` | Builds the Slack app manifest from **your installed Hermes** (scopes/events stay in sync) and swaps in the per-user name + single command, adding the bot scopes the kit needs (`groups:write`, `chat:write.customize`). |
 | `plugins/slack-namespace` | Hermes plugin that answers `/hermes-<id>` and hands it to Hermes' built-in `/hermes` handling. Required — without it Slack says *"app did not respond"*. |
 | `plugins/fallback-alert` | Optional. One Slack message to your home channel when Hermes falls back to another model/provider (and when it recovers), or when a credential pool moves to its next account. |
 | `plugins/slack-tools` | Optional, separately installed. Browser-free reads and per-call human-confirmed writes (optional model-mediated explicit-request send consent) via a configurable **user-token** `sapi` CLI. [Setup and safety](docs/slack-tools.md). |
-| `plugins/slack-forwarded` | Optional, opt-in. Makes Slack **Forward message** attachments visible as bounded, untrusted quotes without fetching the source channel. [Setup and limits](docs/slack-forwarded.md). |
-| `plugins/slack-model-display` | Optional, opt-in. Adds the observed serving model (or explicit unknown) to confirmed final-answer message names; leaves progress unlabelled, without profile changes or extra API calls. [Setup and transport limits](docs/slack-model-display.md). |
+| `plugins/slack-forwarded` | Installed by default. Makes Slack **Forward message** attachments visible as bounded, untrusted quotes without fetching the source channel. [Setup and limits](docs/slack-forwarded.md). |
+| `plugins/slack-model-display` | Installed by default (`base_name` = `Hermes-<id>`; `--no-model-display` to skip). Adds the observed serving model (or explicit unknown) to confirmed final-answer message names; leaves progress unlabelled, without profile changes or extra API calls. [Setup and transport limits](docs/slack-model-display.md). |
 | `scripts/install.py` | Copies (or links) the plugins into your Hermes, enables them, sets `HERMES_SLACK_SLASH`. |
 | `scripts/provision_app.py` | Admin-side. Creates teammates' `Hermes-<id>` apps through the App Manifest API, keeps the 12-hour config token alive by rotation, and re-applies the manifest to every app after a Hermes update. |
 | `scripts/setup_pc.py` | Teammate-side, one command for an admin-created app: checks both tokens against Slack, writes them with a self-only allowlist, installs the plugins, restarts the gateway and waits for the log to confirm. |
@@ -86,7 +86,7 @@ Plain DM opens and top-level posts work with `im:write` and `chat:write` without
 
 ## Optional forwarded-message support
 
-`python scripts/install.py --forwarded-only` installs only `slack-forwarded`, preserving existing plugins and `HERMES_SLACK_SLASH`. For a new installation, use `python scripts/install.py alice --with-forwarded`. The installer never restarts the gateway. The plugin renders only attachments explicitly marked both `is_share=true` and `is_msg_unfurl=true`; ordinary message-link previews remain unchanged. See [setup, rollback and compatibility limits](docs/slack-forwarded.md).
+`python scripts/install.py --forwarded-only` installs only `slack-forwarded`, preserving existing plugins and `HERMES_SLACK_SLASH`. A full `python scripts/install.py alice` includes it by default. The installer never restarts the gateway. The plugin renders only attachments explicitly marked both `is_share=true` and `is_msg_unfurl=true`; ordinary message-link previews remain unchanged. See [setup, rollback and compatibility limits](docs/slack-forwarded.md).
 
 ## fallback-alert options
 

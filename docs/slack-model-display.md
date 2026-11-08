@@ -1,10 +1,10 @@
 # Optional per-response Slack display names
 
-`slack-model-display` adds the **observed response model** to confirmed final-answer posts, for example `Hermes-example (gpt-6.1-sol)` or `Hermes-example (claude-sonnet-5-5)`. A confirmed final whose model cannot be proved uses `Hermes-example (모델 확인 불가)` instead of silently omitting the suffix. Progress, commentary and system notices remain unlabelled. It changes only the `username` field of the existing `chat.postMessage` payload. It never renames the bot profile and makes no additional Slack or LLM calls in the send path. It is opt-in and is not installed by the default kit installer.
+`slack-model-display` adds the **observed response model** to confirmed final-answer posts, for example `Hermes-example (gpt-6.1-sol)` or `Hermes-example (claude-sonnet-5-5)`. A confirmed final whose model cannot be proved uses `Hermes-example (모델 확인 불가)` instead of silently omitting the suffix. Progress, commentary and system notices remain unlabelled. It changes only the `username` field of the existing `chat.postMessage` payload. It never renames the bot profile and makes no additional Slack or LLM calls in the send path. Since 2026-11 the kit installer installs it by default (`python scripts/install.py <id>` sets `base_name` to `Hermes-<id>`; skip with `--no-model-display`), and the kit manifest (`make_manifest.py`, `provision_app.py`) already includes `chat:write.customize`.
 
 ## Install (PowerShell)
 
-Run from this repository after reviewing the plugin. Add **`chat:write.customize`** under your Slack app's **OAuth & Permissions → Bot Token Scopes**, reinstall the app, and ensure Hermes uses the resulting bot token. Do not put tokens in commands, this repository, or `config.yaml`.
+For a manual install (an app not built from the kit manifest): add **`chat:write.customize`** under your Slack app's **OAuth & Permissions → Bot Token Scopes**, reinstall the app, and ensure Hermes uses the resulting bot token. Do not put tokens in commands, this repository, or `config.yaml`.
 
 ```powershell
 $hermesHome = Split-Path (hermes config env-path)

@@ -4,8 +4,12 @@
     python install.py <id>               # copy plugins, set HERMES_SLACK_SLASH=hermes-<id>, enable
     python install.py <id> --link        # symlink instead of copy (for kit developers)
     python install.py <id> --no-alert    # skip the fallback-alert plugin
+    python install.py <id> --no-model-display  # app without chat:write.customize yet
     python install.py --forwarded-only   # install only forwarded-message support
-    python install.py <id> --with-forwarded  # opt in during a full kit install
+
+Default plugins: slack-namespace, fallback-alert, slack-forwarded, slack-model-display
+(base_name set to "Hermes-<id>"). slack-tools is never installed by default — it uses the
+owner's own user token; see --tools-only.
 
 Resolves HERMES_HOME via `hermes config env-path`, so profiles and Windows paths
 (%LOCALAPPDATA%\\hermes) work without hardcoding. Restart the gateway afterwards:
@@ -20,7 +24,8 @@ import sys
 from pathlib import Path
 
 KIT = Path(__file__).resolve().parent.parent
-PLUGINS = ["slack-namespace", "fallback-alert"]
+PLUGINS = ["slack-namespace", "fallback-alert", "slack-forwarded", "slack-model-display"]
+MODEL_DISPLAY_BASE = "plugins.entries.slack-model-display.settings.base_name"
 
 
 def run(*args: str) -> str:
@@ -56,7 +61,9 @@ def main() -> None:
     only = ap.add_mutually_exclusive_group()
     only.add_argument("--tools-only", action="store_true", help="install only slack-tools; leave slash namespace and alerts untouched")
     only.add_argument("--forwarded-only", action="store_true", help="install only slack-forwarded; preserve existing plugins and namespace")
-    ap.add_argument("--with-forwarded", action="store_true", help="also install optional slack-forwarded with the namespace/alert kit")
+    ap.add_argument("--no-model-display", action="store_true",
+                    help="don't install slack-model-display (needs chat:write.customize on the app)")
+    ap.add_argument("--with-forwarded", action="store_true", help=argparse.SUPPRESS)  # now default; kept for old commands
     a = ap.parse_args()
     if not (a.tools_only or a.forwarded_only) and not a.id:
         ap.error("id is required unless --tools-only or --forwarded-only is used")
@@ -70,9 +77,9 @@ def main() -> None:
     dest_root.mkdir(parents=True, exist_ok=True)
 
     names = (["slack-tools"] if a.tools_only else ["slack-forwarded"] if a.forwarded_only
-             else PLUGINS + (["slack-forwarded"] if a.with_forwarded else []))
+             else PLUGINS)
     for name in names:
-        if name == "fallback-alert" and a.no_alert:
+        if (name == "fallback-alert" and a.no_alert) or (name == "slack-model-display" and a.no_model_display):
             continue
         src, dest = KIT / "plugins" / name, dest_root / name
         if dest.is_symlink() or dest.is_file():
@@ -94,6 +101,10 @@ def main() -> None:
         return
     set_env(env_path, "HERMES_SLACK_SLASH", f"hermes-{ident}")
     print(f"  set HERMES_SLACK_SLASH=hermes-{ident} in {env_path}")
+    if not a.no_model_display:
+        # Same id as the app name, so a rename (install.py <new>) keeps the post name in step.
+        run("config", "set", MODEL_DISPLAY_BASE, f"Hermes-{ident}")
+        print(f"  set {MODEL_DISPLAY_BASE}=Hermes-{ident}")
     print("\nNext: hermes gateway restart   (then try  /hermes-%s help  in Slack)" % ident)
 
 

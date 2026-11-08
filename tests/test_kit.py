@@ -161,6 +161,15 @@ class Manifest(unittest.TestCase):
         self.assertIn("commands", m["oauth_config"]["scopes"]["bot"])
         self.assertEqual(self.BASE["display_information"]["name"], "Hermes")  # input untouched
 
+    def test_kit_manifest_adds_kit_scopes_once(self):
+        m = mk.kit_manifest(self.BASE, "alice")
+        bot = m["oauth_config"]["scopes"]["bot"]
+        self.assertEqual(bot, ["chat:write", "commands", "groups:write", "chat:write.customize"])
+        self.assertEqual(mk.with_kit_scopes(m)["oauth_config"]["scopes"]["bot"], bot)  # idempotent
+        self.assertEqual(m["display_information"]["name"], "Hermes-alice")
+        self.assertEqual(self.BASE["oauth_config"]["scopes"]["bot"], ["chat:write", "commands"])
+        self.assertEqual(mk.namespace(self.BASE, "alice")["oauth_config"], self.BASE["oauth_config"])
+
     def test_bad_id(self):
         for bad in ["", "Alice", "a b", "x" * 30, "-a"]:
             with self.assertRaises(ValueError):

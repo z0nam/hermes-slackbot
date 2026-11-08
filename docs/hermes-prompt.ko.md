@@ -29,7 +29,7 @@
 
 2. 키트 받기: 홈 폴더 아래 hermes-slackbot 에 https://github.com/z0nam/hermes-slackbot 을 clone 한다. 이미 있으면 `git pull`. 그 폴더에서 `python -m unittest discover -s tests` 를 돌려 통과하는지 확인한다(1개 skip 은 정상).
 
-3. 플러그인 설치: 예전에 손으로 만든 `<HERMES_HOME>/plugins/slack-namespace` 가 있고 키트가 설치한 것이 아니라면 `<HERMES_HOME>/plugins-backup-<오늘날짜>` 로 옮겨 백업한다(삭제 말고 이동, 내 확인 후). 그다음 키트 폴더에서 `python scripts/install.py <ID>` 를 실행한다(복사 방식, --link 쓰지 말 것. Windows 경로 구분자는 알아서 맞춰라). 끝나면 `hermes plugins list` 에서 slack-namespace·fallback-alert 가 enabled 인지, .env 에 HERMES_SLACK_SLASH=hermes-<ID> 가 있는지 확인한다.
+3. 플러그인 설치: 예전에 손으로 만든 `<HERMES_HOME>/plugins/slack-namespace` 가 있고 키트가 설치한 것이 아니라면 `<HERMES_HOME>/plugins-backup-<오늘날짜>` 로 옮겨 백업한다(삭제 말고 이동, 내 확인 후). 그다음 키트 폴더에서 `python scripts/install.py <ID>` 를 실행한다(복사 방식, --link 쓰지 말 것. Windows 경로 구분자는 알아서 맞춰라). 끝나면 `hermes plugins list` 에서 slack-namespace·fallback-alert·slack-forwarded·slack-model-display 가 enabled 인지, .env 에 HERMES_SLACK_SLASH=hermes-<ID> 가 있는지 확인한다.
 
 4. 매니페스트 만들기: 키트 폴더에서 `python scripts/make_manifest.py <ID> --out <바탕화면>/hermes-slack-manifest.json` 실행(바탕화면 경로는 OS에 맞게). 만든 파일에서 앱 이름(display_information.name), 봇 이름(features.bot_user.display_name), 슬래시 명령 목록만 요약해 보여 줘라. 이름 2개가 Hermes-<ID> 이고 명령이 /hermes-<ID> 하나여야 정상이다.
 

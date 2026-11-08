@@ -61,16 +61,13 @@ hermes gateway restart
 
 1번을 내 아이디로 다시 실행한 뒤, 내 앱의 *Features → App Manifest → Edit* 에서 내용을 교체하고 *Save* → 재설치합니다. 그다음 4·5번을 하면 됩니다. 이름이 안 바뀌면 *Basic Information → Display Information* 과 *App Home* 의 이름도 확인합니다.
 
-## 전달 메시지 읽기 (선택)
+## 전달 메시지 읽기
 
-슬랙의 **메시지 전달**로 보낸 내용이 빈 메시지처럼 보이는 경우, 선택 플러그인 `slack-forwarded`를 설치합니다.
+슬랙의 **메시지 전달**로 보낸 내용이 빈 메시지처럼 보이는 문제를 `slack-forwarded`가 고칩니다. 2026-11부터 `python scripts\install.py alice`가 기본으로 설치합니다. 예전에 설치한 봇에 이것만 더하려면:
 
 ```powershell
 # 기존 봇: 다른 플러그인과 슬래시 명령 설정은 그대로 유지
 python scripts\install.py --forwarded-only
-
-# 신규 설치 때 함께 추가하려면
-python scripts\install.py alice --with-forwarded
 ```
 
 설치 프로그램은 게이트웨이를 재시작하지 않습니다. 적용할 준비가 된 뒤에만 별도로 `hermes gateway restart`를 실행합니다. 전달 원문은 작성자·출처 채널 ID·퍼머링크와 함께 **신뢰되지 않은 인용문**으로 표시되며, 현재 발신자의 명령으로 취급하지 않습니다. 추가 Slack 권한이나 원본 채널 조회가 필요 없고, 일반 메시지 링크 미리보기는 중복 추가하지 않습니다.
@@ -86,3 +83,7 @@ FALLBACK_ALERT_ACCOUNT_NAMES=personal=개인,anthropic-oauth-2=회사
 ```
 
 필요 없으면 `python scripts\install.py alice --no-alert` 로 설치하거나 `hermes plugins disable fallback-alert` 로 끕니다.
+
+## 답변에 모델 이름 붙이기
+
+`slack-model-display`는 최종 답변의 보낸 사람 이름을 `Hermes-alice (claude-sonnet-5-5)`처럼 바꿔, 어느 모델이 답했는지 보여 줍니다. 2026-11부터 `install.py`가 기본으로 설치하고 이름 앞부분을 `Hermes-<아이디>`로 맞춥니다. 앱에 `chat:write.customize` 권한이 있어야 하며, 키트 매니페스트(`make_manifest.py`)에는 들어 있습니다. 권한을 아직 넣지 않은 앱이면 `python scripts\install.py alice --no-model-display`로 설치합니다. [상세](slack-model-display.md)

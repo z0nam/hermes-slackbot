@@ -5,6 +5,7 @@ Starts from Hermes' own manifest (`hermes slack manifest --agent-view`, so scope
 in sync with your Hermes version) and changes only:
   * app name + bot display name  -> "Hermes-<id>"
   * slash commands               -> just "/hermes-<id>"  (needs the slack-namespace plugin)
+  * bot scopes                   -> + groups:write, chat:write.customize  (KIT_BOT_SCOPES)
 
 Usage:
     python make_manifest.py <id> [--out PATH] [--description TEXT]
@@ -22,6 +23,12 @@ import subprocess
 import sys
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,20}$")  # Slack: lowercase, max 32 chars incl. "/hermes-"
+
+# Bot scopes the kit needs on top of Hermes' own manifest:
+#   groups:write         create the owner's private "hermes-<id>" channel (conversations.create
+#                        is_private) and invite the owner (conversations.invite)
+#   chat:write.customize slack-model-display sets the per-post username "Hermes-<id> (<model>)"
+KIT_BOT_SCOPES = ["groups:write", "chat:write.customize"]
 
 
 def hermes_manifest(name: str, description: str) -> dict:
@@ -58,6 +65,19 @@ def namespace(manifest: dict, ident: str) -> dict:
     return m
 
 
+def with_kit_scopes(manifest: dict) -> dict:
+    """Add KIT_BOT_SCOPES to the bot scopes, keeping order and existing entries. (pure)"""
+    m = json.loads(json.dumps(manifest))
+    scopes = m.setdefault("oauth_config", {}).setdefault("scopes", {}).setdefault("bot", [])
+    scopes.extend(s for s in KIT_BOT_SCOPES if s not in scopes)
+    return m
+
+
+def kit_manifest(manifest: dict, ident: str) -> dict:
+    """Everything the kit changes in Hermes' manifest: names, one command, extra scopes."""
+    return with_kit_scopes(namespace(manifest, ident))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("id", help="short personal id, e.g. your Slack handle (lowercase)")
@@ -66,7 +86,7 @@ def main() -> None:
     a = ap.parse_args()
     ident = a.id.strip().lower()
     desc = a.description or f"Personal Hermes agent ({ident}) — only its owner can use it"
-    m = namespace(hermes_manifest(f"Hermes-{ident}", desc), ident)
+    m = kit_manifest(hermes_manifest(f"Hermes-{ident}", desc), ident)
     text = json.dumps(m, ensure_ascii=False, indent=2)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:

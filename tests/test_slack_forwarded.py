@@ -197,27 +197,41 @@ class ForwardedRendering(unittest.TestCase):
 
 
 class ForwardedInstaller(unittest.TestCase):
-    def test_full_install_requires_explicit_opt_in(self):
+    def _install(self, *extra):
         import tempfile
         from unittest.mock import patch
         spec = importlib.util.spec_from_file_location('installer', ROOT / 'scripts/install.py')
         installer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(installer)
-        for opt_in in [False, True]:
-            with self.subTest(opt_in=opt_in), tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as directory:
-                home = Path(directory)
-                calls = []
-                def run(*args):
-                    calls.append(args)
-                    return str(home / '.env') if args == ('config', 'env-path') else ''
-                argv = ['install.py', 'alice'] + (['--with-forwarded'] if opt_in else [])
-                with patch.object(installer, 'run', run), patch.object(sys, 'argv', argv):
-                    installer.main()
-                self.assertEqual((home / 'plugins/slack-forwarded').exists(), opt_in)
-                self.assertTrue((home / 'plugins/slack-namespace').exists())
-                self.assertTrue((home / 'plugins/fallback-alert').exists())
+        directory = tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR'))
+        self.addCleanup(directory.cleanup)
+        home = Path(directory.name)
+        calls = []
+        def run(*args):
+            calls.append(args)
+            return str(home / '.env') if args == ('config', 'env-path') else ''
+        with patch.object(installer, 'run', run), patch.object(sys, 'argv', ['install.py', 'alice', *extra]):
+            installer.main()
+        return home, calls
+
+    def test_full_install_includes_forwarded_and_model_display(self):
+        for extra in [(), ('--with-forwarded',)]:  # old flag still accepted
+            with self.subTest(extra=extra):
+                home, calls = self._install(*extra)
+                for name in ['slack-namespace', 'fallback-alert', 'slack-forwarded', 'slack-model-display']:
+                    self.assertTrue((home / 'plugins' / name).exists(), name)
+                    self.assertIn(('plugins', 'enable', name), calls)
+                self.assertFalse((home / 'plugins/slack-tools').exists())  # owner token: never default
+                self.assertIn(('config', 'set', 'plugins.entries.slack-model-display.settings.base_name',
+                               'Hermes-alice'), calls)
                 self.assertEqual((home / '.env').read_text(), 'HERMES_SLACK_SLASH=hermes-alice\n')
                 self.assertFalse(any(call[0] == 'gateway' for call in calls))
+
+    def test_no_model_display_skips_plugin_and_setting(self):
+        home, calls = self._install('--no-model-display')
+        self.assertFalse((home / 'plugins/slack-model-display').exists())
+        self.assertTrue((home / 'plugins/slack-forwarded').exists())
+        self.assertFalse(any(call[:2] == ('config', 'set') for call in calls))
 
     def test_forwarded_only_preserves_existing_plugins_and_namespace(self):
         import json
