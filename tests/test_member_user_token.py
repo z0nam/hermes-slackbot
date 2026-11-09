@@ -187,6 +187,30 @@ class PortableSapi(unittest.TestCase):
             self.assertEqual(self.sapi.download('xoxp-t', {'file': 'F0123456789', 'dir': str(self.dir)})['error'],
                              'size_mismatch')
 
+    def test_concurrent_same_name_downloads_never_overwrite(self):
+        import threading
+        info = {'ok': True, 'file': {'id': 'F0123456789', 'name': 'a.txt', 'size': 1,
+                                     'url_private_download': 'https://files.slack.com/x/a.txt'}}
+        gate = threading.Barrier(4)
+
+        class Resp(io.BytesIO):
+            headers = {'Content-Type': 'text/plain'}
+            def __enter__(s):
+                gate.wait()  # all four have passed any existence check before writing
+                return s
+            def __exit__(s, *a):
+                return False
+        outs = []
+        with mock.patch.object(self.sapi, 'api', return_value=info), \
+                mock.patch.object(self.sapi, 'request', side_effect=lambda *a, **k: Resp(b'z')):
+            threads = [threading.Thread(target=lambda: outs.append(
+                self.sapi.download('xoxp-t', {'file': 'F0123456789', 'dir': str(self.dir)}))) for _ in range(4)]
+            [t.start() for t in threads]
+            [t.join() for t in threads]
+        paths = {o['file']['path'] for o in outs}
+        self.assertEqual(len(paths), 4)
+        self.assertEqual(len(list(self.dir.iterdir())), 4)
+
     def test_upload_uses_external_upload_flow(self):
         f = self.dir / 'r.pdf'
         f.write_bytes(b'xyz')

@@ -90,16 +90,23 @@ def download(token: str, params: dict) -> dict:
     out_dir = Path(folder)
     out_dir.mkdir(parents=True, exist_ok=True)
     name = safe_name(f.get("name") or fid)
-    target, n = out_dir / name, 1
-    while target.exists():
-        target, n = out_dir / f"{Path(name).stem} ({n}){Path(name).suffix}", n + 1
     with request(url, token) as r:
         if "text/html" in (r.headers.get("Content-Type") or ""):
             return {"ok": False, "error": "login_page_instead_of_file"}
         data = r.read()
     if isinstance(f.get("size"), int) and len(data) != f["size"]:
         return {"ok": False, "error": "size_mismatch"}
-    target.write_bytes(data)
+    # Exclusive create: concurrent downloads of the same name each get their own file.
+    for n in range(1000):
+        target = out_dir / (name if n == 0 else f"{Path(name).stem} ({n}){Path(name).suffix}")
+        try:
+            with open(target, "xb") as out:
+                out.write(data)
+            break
+        except FileExistsError:
+            continue
+    else:
+        return {"ok": False, "error": "too_many_same_names"}
     return {"ok": True, "file": {"id": fid, "name": f.get("name"), "mimetype": f.get("mimetype"),
                                  "size": len(data), "path": str(target)}}
 

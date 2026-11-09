@@ -81,6 +81,20 @@ def read_secrets(path: Path) -> dict:
     return {"bot": bot, "app": app, "user": user}
 
 
+def env_value(text: str, key: str) -> str:
+    """Last value of KEY in .env text, quotes stripped. (pure — for tests)"""
+    val = ""
+    for line in text.splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k.strip() == key:
+            val = v.strip().strip('"').strip("'")
+    return val
+
+
+def existing_bot(text: str) -> bool:
+    return env_value(text, "SLACK_BOT_TOKEN").startswith("xoxb-")
+
+
 def slack_tools_settings(env_path: Path, python: str, host: str) -> list:
     """`hermes config set` pairs that run the bundled sapi.py with this Python. (pure — for tests)"""
     home = env_path.parent
@@ -192,6 +206,11 @@ def main() -> None:
     existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
     secrets = read_secrets(a.secrets_file) if unattended else None
     if secrets and not secrets["bot"]:  # user-token-only: the bot is already connected
+        allowed = env_value(existing, "SLACK_ALLOWED_USERS")
+        if not existing_bot(existing) or allowed != a.user:
+            # Otherwise whoever the bot already obeys would get --user's DMs and private channels.
+            sys.exit("this PC's bot is not set up for --user alone (SLACK_ALLOWED_USERS must be exactly "
+                     "that member, with a bot token); user token not stored")
         saved = backup_env(env_path)
         if saved:
             print(f"  backed up {env_path.name} → {saved.name}")

@@ -283,6 +283,33 @@ class SetupPc(unittest.TestCase):
             for c in run.call_args_list + sub.call_args_list:  # the token never goes on a command line
                 self.assertNotIn("xoxp-TEST-9", json.dumps([str(x) for x in c.args]))
 
+    def test_user_token_only_requires_bot_already_owned_by_user(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            for text in ("SLACK_BOT_TOKEN=xoxb-T\nSLACK_ALLOWED_USERS=UOTHER0001\n",
+                         "SLACK_BOT_TOKEN=xoxb-T\nSLACK_ALLOWED_USERS=UOWNER0001,UOTHER0001\n",
+                         "SLACK_ALLOWED_USERS=UOWNER0001\n"):
+                env.write_text(text, encoding="utf-8")
+                f = Path(d) / "u.json"
+                f.write_text(json.dumps({"user_token": "xoxp-TEST-9"}), encoding="utf-8")
+                argv = ["setup_pc.py", "alice", "--user", "UOWNER0001", "--secrets-file", str(f)]
+                with mock.patch.object(self.sp.install, "run", return_value=str(env)), \
+                        mock.patch.object(self.sp, "enable_user_token") as enable, \
+                        mock.patch.object(sys, "argv", argv), mock.patch("builtins.print"), \
+                        self.assertRaises(SystemExit) as e:
+                    self.sp.main()
+                self.assertIn("not set up for --user alone", str(e.exception))
+                enable.assert_not_called()
+                self.assertFalse(f.exists())
+            env.write_text("SLACK_BOT_TOKEN=xoxb-T\nSLACK_ALLOWED_USERS=UOWNER0001\n", encoding="utf-8")
+            f.write_text(json.dumps({"user_token": "xoxp-TEST-9"}), encoding="utf-8")
+            argv = ["setup_pc.py", "alice", "--user", "UOWNER0001", "--secrets-file", str(f), "--no-restart"]
+            with mock.patch.object(self.sp.install, "run", return_value=str(env)), \
+                    mock.patch.object(self.sp, "enable_user_token") as enable, \
+                    mock.patch.object(sys, "argv", argv), mock.patch("builtins.print"):
+                self.sp.main()
+            enable.assert_called_once_with(env, "xoxp-TEST-9", "UOWNER0001")
+
     def test_read_secrets_stops_when_delete_fails(self):
         with tempfile.TemporaryDirectory() as d:
             f = self._secrets(d)
