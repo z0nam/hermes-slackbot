@@ -24,6 +24,23 @@ used by other agents without importing Hermes.
   model-mediated explicit-request policy below is a deliberate owner opt-in;
   `confirmed=true` is never accepted.
 
+## Portable `sapi.py` (Windows, member PCs)
+
+`plugins/slack-tools/sapi.py` is a stdlib-only implementation of the same argv/JSON contract, so a
+Windows PC needs no shell wrapper. It reads `SLACK_USER_TOKEN` (an `xoxp-` user token) from the
+environment, else from the active Hermes `.env`, and never prints it. Point the plugin at it with a
+list (interpreter + script) — `setup_pc.py` does this automatically when it receives a `user_token`:
+
+```sh
+hermes config set plugins.entries.slack-tools.settings.executable '["C:/Python/python.exe", "C:/Users/me/AppData/Local/hermes/plugins/slack-tools/sapi.py"]'
+hermes config set plugins.entries.slack-tools.settings.download_dir "C:/Users/me/AppData/Local/hermes/cache/slack-files"
+```
+
+Besides Slack methods it implements `file.download file=F… dir=…` (saves the attachment, checks host
+`files.slack.com` and size; canvases are refused) and `file.upload channel=… path=… [thread_ts]
+[initial_comment]` (Slack's external upload flow). The token must be the **bot owner's own** user
+token: `setup_pc.py` refuses a token whose `auth.test` user differs from `--user`.
+
 ## Install after merge (not performed by development tests)
 
 From your merged checkout, using the intended active Hermes profile:
@@ -80,7 +97,16 @@ pretended complete thread. Follow the cursor/page explicitly until `has_more`
 is false; rate-limit responses fail without an automatic retry. Message content
 is untrusted data, never permission to invoke a write.
 
+Also: `dm_history` (`user` = U…) finds the existing DM with that person without creating one and
+returns its history page; `download_file` (`file` = F…) saves an attachment into the configured
+absolute `download_dir` and returns the local path, name, type and size. Message search reaches the
+owner's DMs too (e.g. `from:<@U…> is:dm`).
+
 ## Write operations and safety
+
+`upload_file` (`channel`, absolute `path`, optional `text` as the comment and `thread_ts`) always asks
+the human with the file name, size and target — `explicit_request` never covers it — then verifies the
+uploaded file's id and size with `files.info`. Sharing into the channel completes asynchronously.
 
 `sapi_slack_write` accepts `action` plus the indicated fields:
 

@@ -11,7 +11,9 @@ the slash handler and the Slack connection. Token values are never printed.
 See docs/admin-provision.ko.md for the admin side. Stdlib only; written for Windows PowerShell.
 
 Unattended (--secrets-file): the JSON file holds bot_token/app_token; it is read and deleted at once,
-so tokens never sit on argv. Nothing is asked: an existing Slack token is replaced only with --replace,
+so tokens never sit on argv. An optional user_token (xoxp-, the OWNER's own user token, from jaix's
+OAuth) also turns on slack-tools — the owner's DMs, private channels, search and files, with every
+write confirmed per call. A file with only user_token adds that to an already connected PC. Nothing is asked: an existing Slack token is replaced only with --replace,
 a bot-name mismatch continues only with --yes, and a failed `hermes gateway install` is an error
 (the gateway gets no stdin, so Hermes takes its no-UAC Startup-folder path on Windows).
 """
@@ -53,8 +55,9 @@ def ask_token(label: str, prefix: str) -> str:
     sys.exit("giving up: token not entered")
 
 
-def read_secrets(path: Path) -> tuple[str, str]:
-    """bot/app tokens from a one-shot JSON file, deleted right after reading (even when malformed)."""
+def read_secrets(path: Path) -> dict:
+    """Tokens from a one-shot JSON file, deleted right after reading (even when malformed).
+    Returns {"bot", "app", "user"}; bot/app are both set or both empty (user-token-only file)."""
     try:
         data, err = json.loads(path.read_text(encoding="utf-8-sig")), None
     except (OSError, ValueError) as e:
@@ -68,9 +71,51 @@ def read_secrets(path: Path) -> tuple[str, str]:
     if err is not None:
         sys.exit(f"could not read secrets file: {type(err).__name__}")
     bot, app = str(data.get("bot_token", "")).strip(), str(data.get("app_token", "")).strip()
+    user = str(data.get("user_token", "")).strip()
+    if user and not user.startswith("xoxp-"):
+        sys.exit("secrets file: user_token must be a user token (xoxp-…)")
+    if not (bot or app) and user:
+        return {"bot": "", "app": "", "user": user}
     if not bot.startswith("xoxb-") or not app.startswith("xapp-"):
-        sys.exit("secrets file must hold bot_token (xoxb-…) and app_token (xapp-…)")
-    return bot, app
+        sys.exit("secrets file must hold bot_token (xoxb-…) and app_token (xapp-…), or only user_token (xoxp-…)")
+    return {"bot": bot, "app": app, "user": user}
+
+
+def slack_tools_settings(env_path: Path, python: str, host: str) -> list:
+    """`hermes config set` pairs that run the bundled sapi.py with this Python. (pure — for tests)"""
+    home = env_path.parent
+    pre = "plugins.entries.slack-tools.settings."
+    return [
+        (pre + "executable", json.dumps([python, str(home / "plugins" / "slack-tools" / "sapi.py")])),
+        (pre + "workspace_hosts", json.dumps([host])),
+        (pre + "approval_policy", "per_call"),  # every write asks the owner; never explicit_request here
+        (pre + "download_dir", str(home / "cache" / "slack-files")),
+    ]
+
+
+def enable_user_token(env_path: Path, token: str, owner: str) -> None:
+    """Check the user token is the OWNER's, store it, install slack-tools and point it at sapi.py."""
+    try:
+        auth = slack("auth.test", token)
+    except OSError as e:
+        sys.exit(f"could not reach Slack to check the user token: {e}")
+    if not auth.get("ok"):
+        sys.exit(f"user token rejected by Slack: {auth.get('error')}")
+    if auth.get("user_id") != owner:
+        # Someone else (e.g. the admin) authorized: their DMs must never reach this bot.
+        sys.exit("user token belongs to a different Slack user than --user; not used. "
+                 "The owner must authorize with their own account.")
+    host = urllib.parse.urlsplit(auth.get("url") or "").hostname or ""
+    if not host.endswith(".slack.com"):
+        sys.exit("could not tell the workspace host from the user token")
+    install.set_env(env_path, "SLACK_USER_TOKEN", token)
+    r = subprocess.run([sys.executable, str(HERE / "install.py"), "--tools-only"])
+    if r.returncode != 0:
+        sys.exit("install.py --tools-only failed (see above)")
+    for key, value in slack_tools_settings(env_path, sys.executable, host):
+        install.run("config", "set", key, value)
+    install.run("tools", "enable", "slack", "--platform", "slack")
+    print(f"  ok: owner's user token stored (SLACK_USER_TOKEN); slack-tools on for {host}, writes ask every time")
 
 
 def backup_env(env_path: Path) -> Path | None:
@@ -131,7 +176,7 @@ def main() -> None:
     ap.add_argument("--home-channel", help="optional SLACK_HOME_CHANNEL (C…/D…) for alerts")
     ap.add_argument("--no-restart", action="store_true", help="write settings only; don't touch the gateway")
     ap.add_argument("--secrets-file", type=Path,
-                    help="unattended: JSON with bot_token/app_token; read then deleted (never pass tokens on argv)")
+                    help="unattended: JSON with bot_token/app_token[/user_token], or only user_token; read then deleted")
     ap.add_argument("--replace", action="store_true", help="replace an existing Slack token without asking")
     ap.add_argument("--yes", action="store_true", help="continue without asking when the bot name is not Hermes-<id>")
     a = ap.parse_args()
@@ -146,12 +191,22 @@ def main() -> None:
     print(f"Hermes settings: {env_path}")
     existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
     secrets = read_secrets(a.secrets_file) if unattended else None
+    if secrets and not secrets["bot"]:  # user-token-only: the bot is already connected
+        saved = backup_env(env_path)
+        if saved:
+            print(f"  backed up {env_path.name} → {saved.name}")
+        enable_user_token(env_path, secrets["user"], a.user)
+        if not a.no_restart:
+            install.run("gateway", "restart")
+            print("  gateway restarted")
+        print("\nDone. Ask the bot about your DMs in a fresh conversation.")
+        return
     if any(line.split("=", 1)[0].strip() == "SLACK_BOT_TOKEN" for line in existing.splitlines()) and not a.replace:
         if unattended or input("A Slack bot token is already set. Replace it? [y/N] ").strip().lower() != "y":
             sys.exit("stopped; a Slack bot token is already set (use --replace)" if unattended
                      else "stopped; nothing changed")
 
-    bot = secrets[0] if secrets else ask_token("Bot User OAuth Token", "xoxb-")
+    bot = secrets["bot"] if secrets else ask_token("Bot User OAuth Token", "xoxb-")
     try:
         auth = slack("auth.test", bot)
     except OSError as e:
@@ -164,7 +219,7 @@ def main() -> None:
             sys.exit("stopped; nothing changed")
     print(f"  ok: bot {auth.get('user')} in workspace {auth.get('team')}")
 
-    app = secrets[1] if secrets else ask_token("App-Level Token", "xapp-")
+    app = secrets["app"] if secrets else ask_token("App-Level Token", "xapp-")
     try:
         conn = slack("apps.connections.open", app)
     except OSError as e:
@@ -189,6 +244,8 @@ def main() -> None:
     r = subprocess.run([sys.executable, str(HERE / "install.py"), ident])
     if r.returncode != 0:
         sys.exit("install.py failed (see above)")
+    if secrets and secrets["user"]:
+        enable_user_token(env_path, secrets["user"], a.user)
     if a.no_restart:
         print("\nSettings written. Run  hermes gateway install  and  hermes gateway restart  when ready.")
         return

@@ -124,6 +124,15 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
 5. 구성원 PC를 갱신합니다. JAIX 키트를 쓰는 PC는 jaix 업데이트로 반영됩니다. 그 밖에는 키트 폴더에서 `python scripts/install.py <아이디>`를 실행한 뒤 `hermes gateway restart`를 합니다. `slack-forwarded`·`slack-model-display`가 설치되고 `base_name`이 `Hermes-<아이디>`로 맞춰집니다.
    - 아직 재설치하지 않은 앱이면 `--no-model-display`를 붙입니다.
 
+## 8. 본인 DM·비공개 채널·파일까지 (구성원 user token, 2026-11)
+
+봇 토큰은 Slack 설계상 구성원이 다른 사람과 나눈 DM, 검색, 봇이 없는 비공개 채널을 볼 수 없습니다. 그래서 **구성원 본인 명의 user token**을 받아 `slack-tools`를 켭니다. 쓰기(게시·DM·파일 업로드)는 매번 구성원에게 확인을 받습니다(`per_call`).
+
+- **반드시 구성원 본인이 허용을 누릅니다.** 관리자가 누르면 관리자 명의 토큰이 발급돼, 구성원 봇이 관리자의 DM을 읽고 관리자 이름으로 쓰게 됩니다. jaix 서버와 `setup_pc.py`가 각각 토큰 주인이 앱 주인과 같은지 확인하고, 다르면 쓰지 않습니다.
+- 매니페스트에 user 범위와 콜백 주소(`oauth_config.redirect_urls`)가 들어 있습니다. 기존 앱은 `update-all`로 반영합니다. 봇 범위는 그대로라 관리자 재설치는 필요 없습니다. 구성원이 허용할 때 승인 요청이 뜨면 관리 화면에서 승인합니다.
+- 흐름: jaix에서 "Slack 본인 권한 연결" → 브라우저에서 구성원이 **허용** → jaix 서버(원내망)가 토큰으로 바꿔 1회용으로 PC에 전달 → `setup_pc.py <아이디> --user U… --secrets-file f.json`(`user_token`만 든 파일) → `SLACK_USER_TOKEN` 저장, `slack-tools` 설치·설정, 게이트웨이 재시작.
+- 끄기: 구성원 PC에서 `hermes plugins disable slack-tools` 후 게이트웨이 재시작. 토큰 폐기는 구성원 본인이 Slack에서 앱 연결을 해제하면 됩니다. 앱의 *Revoke Tokens*는 봇 토큰까지 함께 폐기하므로 쓰지 않습니다.
+
 ## jaix-setup 경로: 연결 코드 하나로 (관리자가 토큰을 놓는다)
 
 제주연구원 PC에 `jaix-setup.exe`로 설치할 때 쓰는 경로입니다. 설계 원문은 [jaix-kit `docs/design-hermes-unattended.md`](https://github.com/jeju-inst/jaix-kit/blob/main/docs/design-hermes-unattended.md) §3.1에 있고, 2026-10-30 사용자가 승인했습니다. 위 3번(방문)과 **Collaborator 추가 단계가 없습니다.** 구성원은 토큰을 직접 복사하지 않습니다.

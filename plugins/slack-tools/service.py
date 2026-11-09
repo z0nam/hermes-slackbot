@@ -1,5 +1,6 @@
 """Agent-neutral constrained Slack service backed by a user-token sapi executable."""
 import json
+import os
 import re
 import subprocess
 from urllib.parse import parse_qs, urlsplit
@@ -7,12 +8,16 @@ from urllib.parse import parse_qs, urlsplit
 
 API_ERRORS = frozenset({'missing_scope', 'invalid_auth', 'not_authed', 'account_inactive',
                         'channel_not_found', 'user_not_found', 'not_in_channel', 'no_permission',
-                        'access_denied', 'ratelimited', 'not_allowed_token_type', 'message_not_found'})
+                        'access_denied', 'ratelimited', 'not_allowed_token_type', 'message_not_found',
+                        'file_not_found', 'canvas_not_downloadable', 'no_user_token', 'size_mismatch',
+                        'invalid_file_size', 'login_page_instead_of_file'})
 SCOPES = frozenset({'identify', 'channels:history', 'groups:history', 'im:history', 'mpim:history',
                     'channels:read', 'groups:read', 'im:read', 'mpim:read', 'im:write', 'mpim:write',
-                    'chat:write', 'search:read'})
+                    'chat:write', 'search:read', 'files:read', 'files:write'})
 METHODS = frozenset({'auth.test', 'conversations.open', 'conversations.info', 'conversations.history',
-                     'conversations.replies', 'search.messages', 'chat.postMessage', 'chat.update', 'chat.delete'})
+                     'conversations.replies', 'search.messages', 'chat.postMessage', 'chat.update', 'chat.delete',
+                     'files.info', 'file.download', 'file.upload'})
+MAX_UPLOAD = 1024 * 1024 * 1024
 STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
 
 
@@ -57,8 +62,15 @@ def failure(exc):
 
 
 class SlackService:
-    def __init__(self, executable='sapi', hosts=(), timeout=30):
+    def __init__(self, executable='sapi', hosts=(), timeout=30, download_dir=''):
         bounded(timeout, 1, 120, 'timeout')
+        # A list lets Windows run the bundled script: [python.exe, ...\\slack-tools\\sapi.py].
+        argv = [executable] if isinstance(executable, str) else executable
+        if (not isinstance(argv, (list, tuple)) or not argv
+                or not all(isinstance(a, str) and a for a in argv)):
+            raise ValueError('executable must be a path/name or a non-empty list of strings')
+        self.argv = list(argv)
+        self.download_dir = download_dir if isinstance(download_dir, str) else ''
         if not isinstance(hosts, (list, tuple)):
             raise ValueError('workspace_hosts must be a list of exact Slack workspace hosts')
         for host in hosts:
@@ -67,7 +79,7 @@ class SlackService:
 
     def _call(self, method, *, stage='request', **params):
         try:
-            result = subprocess.run([self.executable, method, *[f'{k}={v}' for k, v in params.items()]],
+            result = subprocess.run([*self.argv, method, *[f'{k}={v}' for k, v in params.items()]],
                                     capture_output=True, text=True, timeout=self.timeout, shell=False, encoding='utf-8')
             data = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, ValueError):
@@ -83,7 +95,12 @@ class SlackService:
             raise RuntimeError('Slack returned malformed messages; result is unverified')
         return data
 
-    def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', approve=None):
+    def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', path='', approve=None):
+        if action == 'upload_file':
+            return self._upload(channel=channel, path=path, text=text, thread_ts=thread_ts, ts=ts, user=user,
+                                approve=approve)
+        if path:
+            raise ValueError('Only upload_file accepts path')
         if action not in ('post', 'update', 'delete', 'open_dm', 'send_dm'):
             raise ValueError('Unsupported write action')
         if action in ('post', 'update', 'send_dm') and (not isinstance(text, str) or not text.strip() or len(text) > 40000):
@@ -161,6 +178,60 @@ class SlackService:
         if (action == 'delete' and message is not None) or (action != 'delete' and (not message or message.get('text') != text)):
             raise RuntimeError('Write not verified; do not retry automatically')
         return {'verified': True, 'channel': channel, 'ts': sent_ts, 'message': message}
+
+    def _upload(self, *, channel, path, text, thread_ts, ts, user, approve):
+        validate(channel, r'[CGD][A-Z0-9]{8,}', 'channel ID')
+        if ts or user:
+            raise ValueError('upload_file accepts channel, path, optional text and thread_ts')
+        if thread_ts:
+            validate(thread_ts, r'[0-9]{10}\.[0-9]{6}', 'thread timestamp')
+        if not isinstance(text, str) or len(text) > 40000:
+            raise ValueError('Comment must be at most 40000 characters')
+        if not isinstance(path, str) or not os.path.isabs(path) or not os.path.isfile(path):
+            raise ValueError('path must be an absolute path to an existing file')
+        size = os.path.getsize(path)
+        if not 0 < size <= MAX_UPLOAD:
+            raise ValueError('File must be 1 byte to 1 GB')
+        if approve is None:
+            raise PermissionError('Explicit human confirmation required for this action')
+        preview = json.dumps({'identity': 'sapi user token (uploads as a human)', 'action': 'upload_file',
+                              'channel': channel, 'file': os.path.basename(path), 'path': path, 'bytes': size,
+                              'text': text, 'thread_ts': thread_ts}, ensure_ascii=False)
+        if approve(preview) is not True:
+            raise PermissionError('Explicit human confirmation required for this action')
+        params = {'channel': channel, 'path': path}
+        if text:
+            params['initial_comment'] = text
+        if thread_ts:
+            params['thread_ts'] = thread_ts
+        result = self._call('file.upload', stage='write', **params)
+        file_id = result.get('file_id')
+        if not isinstance(file_id, str) or not re.fullmatch(r'F[A-Z0-9]{8,}', file_id) or result.get('channel') != channel:
+            raise RuntimeError('Upload outcome ambiguous; do not retry automatically')
+        info = self._call('files.info', stage='verification', file=file_id).get('file')
+        if not isinstance(info, dict) or info.get('id') != file_id or info.get('size') != size:
+            raise RuntimeError('Upload not verified; do not retry automatically')
+        # Sharing into the channel completes asynchronously; the file itself is verified.
+        return {'verified': True, 'file_id': file_id, 'channel': channel, 'name': info.get('name'), 'bytes': size}
+
+    def download_file(self, file):
+        validate(file, r'F[A-Z0-9]{8,}', 'file ID')
+        if not self.download_dir or not os.path.isabs(self.download_dir):
+            raise ValueError('download_dir is not configured')
+        data = self._call('file.download', file=file, dir=self.download_dir).get('file')
+        if (not isinstance(data, dict) or data.get('id') != file or not isinstance(data.get('path'), str)
+                or os.path.dirname(os.path.abspath(data['path'])) != os.path.abspath(self.download_dir)):
+            raise RuntimeError('Download not verified')
+        return {k: data.get(k) for k in ('id', 'name', 'mimetype', 'size', 'path')}
+
+    def dm_history(self, user, cursor='', limit=100):
+        validate(user, r'[UW][A-Z0-9]{8,}', 'user ID')
+        bounded(limit, 1, 100, 'limit')
+        info = self._call('conversations.open', users=user, return_im='true', prevent_creation='true').get('channel')
+        if (not isinstance(info, dict) or not isinstance(info.get('id'), str)
+                or not re.fullmatch(r'D[A-Z0-9]{8,}', info['id']) or info.get('user') not in (None, user)):
+            raise RuntimeError('DM with this user not found')
+        return {'channel': info['id'], **self.history(info['id'], cursor=cursor, limit=limit)}
 
     def _dm_info(self, channel, *, stage='request'):
         info = self._call('conversations.open', stage=stage, channel=channel, return_im='true', prevent_creation='true').get('channel')
