@@ -162,7 +162,7 @@ python3 scripts/onboard_batch.py --roster ~/명단.tsv --jaix "uv run -q --proje
 - **사람마다 하는 일**
   1. Install 페이지가 열리면 [허용]을 누르고 Enter를 칩니다.
   2. Basic Information과 OAuth & Permissions가 열리면 App-Level Token(`connections:write`)을 만들고 Enter를 칩니다.
-  3. `jaix hermes handoff`의 숨김 입력에 xoxb와 xapp를 차례로 붙여 넣습니다. 도구는 터미널을 jaix에 그대로 넘기므로 토큰을 보지 않습니다. jaix 출력(stdout)에서 JX 코드만 골라냅니다.
+  3. `jaix hermes handoff`의 숨김 입력에 jaix가 묻는 순서대로 xapp와 xoxb를 붙여 넣습니다(jaix-kit#162 이후 xapp 먼저. 그 전 판은 xoxb 먼저라 xapp 창을 닫지 말고 두면 다시 복사하기 쉽습니다). 도구는 터미널을 jaix에 그대로 넘기므로 토큰을 보지 않습니다. jaix 출력(stdout)에서 JX 코드만 골라냅니다.
 - 사람 사이에서는 Enter=시작, `s`=건너뛰기, `q`=중단입니다. 진행 기록은 `~/.config/hermes-slackbot/onboard-progress.json`에 남습니다. 같은 명령을 다시 실행하면 끝난 사람은 빼고, 건너뛴 사람부터 다시 묻습니다. 끝난 사람을 다시 하려면 `--only <아이디>`를 씁니다.
 - 이미 코드를 낸 사람은 jaix가 종료 코드 3으로 멈춥니다. 이때 도구가 `--again`으로 다시 낼지 묻고, 묻지 않고 다시 내는 일은 없습니다.
 - **DM용 코드 모음**은 `~/.config/hermes-slackbot/jx-codes-<날짜>.txt`(0600)에 "이름 · 코드"로 한 줄씩 쌓입니다. 다 보낸 뒤에는 지웁니다.

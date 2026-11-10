@@ -169,8 +169,8 @@ def walk(todo, jaix, progress_path, progress, codes_path, ask=input, open_url=we
         ask("① 브라우저에서 [허용]을 누른 뒤 Enter > ")
         open_url(general)
         open_url(oauth)
-        ask("② Basic Information에서 App-Level Token(connections:write)을 만든 뒤 Enter > ")
-        echo("③ jaix 숨김 입력에 xoxb(OAuth & Permissions)와 xapp(방금 만든 토큰)을 차례로 붙여 넣으세요.")
+        ask("② Basic Information에서 App-Level Token(connections:write)을 만들고, 토큰 창은 열어 둔 채 Enter > ")
+        echo("③ jaix가 묻는 순서대로 붙여 넣으세요: xapp(방금 만든 토큰, 창을 닫지 말 것)·xoxb(OAuth & Permissions 탭).")
         again = False
         while True:
             rc, code = handoff(jaix, ident, row["user"], again=again, echo=echo)
