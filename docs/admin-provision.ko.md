@@ -144,8 +144,9 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
 앱을 여러 개 만든 뒤에는 2번(설치·App-Level Token)과 `handoff`를 사람마다 터미널 한 화면에서 이어 갑니다. 1인당 1-2분 걸립니다.
 
 ```sh
-python3 scripts/onboard_batch.py --roster ~/명단.tsv
-# jaix 가 PATH 에 없으면:  --jaix "uv run --project ~/dev/jaix-kit jaix"
+# studio: jaix 는 PATH 에 두지 않고 jaix-kit main 체크아웃에서 돌린다(재발급 확인 --again 이 든 판이 필요)
+git -C ~/dev/jaix-kit pull -q
+python3 scripts/onboard_batch.py --roster ~/명단.tsv --jaix "uv run -q --project ~/dev/jaix-kit jaix"
 ```
 
 - **명단**은 머리줄이 있는 TSV·CSV입니다. 첫 열은 이름이고, `U…` 모양의 칸을 멤버 ID로 읽습니다. 개인정보이므로 저장소 밖에 둡니다. 레지스트리(`apps.json`)에서 그 멤버가 주인인 앱만 진행하고, 앱이 없는 사람은 이름만 알려 줍니다.

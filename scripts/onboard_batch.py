@@ -5,7 +5,7 @@ After `provision_app.py create` has made the apps, each person still needs three
 browser and a connection code (JX-…) from `jaix hermes handoff`. This script strings those
 together so the admin only clicks and pastes:
 
-    python onboard_batch.py --roster PEOPLE.tsv [--jaix "uv run --project ~/dev/jaix-kit jaix"]
+    python onboard_batch.py --roster PEOPLE.tsv [--jaix "uv run -q --project ~/dev/jaix-kit jaix"]
 
 For each registered app whose owner (Slack member ID) appears in the roster:
   1. opens the app's Install page — click Allow;
@@ -136,7 +136,7 @@ def resolve_jaix(arg: str | None) -> list:
         return shlex.split(arg)
     found = shutil.which("jaix")
     if not found:
-        sys.exit('`jaix` is not on PATH. Pass it explicitly, e.g. --jaix "uv run --project ~/dev/jaix-kit jaix"')
+        sys.exit('`jaix` is not on PATH. Pass it explicitly, e.g. --jaix "uv run -q --project ~/dev/jaix-kit jaix"')
     return [found]
 
 
