@@ -128,10 +128,18 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
 
 봇 토큰은 Slack 설계상 구성원이 다른 사람과 나눈 DM, 검색, 봇이 없는 비공개 채널을 볼 수 없습니다. 그래서 **구성원 본인 명의 user token**을 받아 `slack-tools`를 켭니다. 쓰기(게시·DM·파일 업로드)는 매번 구성원에게 확인을 받습니다(`per_call`).
 
-- **반드시 구성원 본인이 허용을 누릅니다.** 관리자가 누르면 관리자 명의 토큰이 발급돼, 구성원 봇이 관리자의 DM을 읽고 관리자 이름으로 쓰게 됩니다. jaix 서버와 `setup_pc.py`가 각각 토큰 주인이 앱 주인과 같은지 확인하고, 다르면 쓰지 않습니다.
-- 매니페스트에 user 범위와 콜백 주소(`oauth_config.redirect_urls`)가 들어 있습니다. 기존 앱은 `update-all`로 반영합니다. 봇 범위는 그대로라 관리자 재설치는 필요 없습니다. 구성원이 허용할 때 승인 요청이 뜨면 관리 화면에서 승인합니다.
+- **반드시 구성원 본인이 허용을 누릅니다.** 관리자가 누르면 관리자 명의 토큰이 발급돼, 구성원 봇이 관리자의 DM을 읽고 관리자 이름으로 쓰게 됩니다. jaix 서버(콜백의 `authed_user.id`가 요청한 구성원의 레지스트리 UID와 다르면 `auth.revoke`)와 `setup_pc.py`(`auth.test` user가 `--user`와 다르면 멈춤)가 각각 확인합니다.
+- **user token은 공용 앱 하나로 받습니다**(사용자 결정 2026-11-10). 구성원별 `Hermes-<아이디>` 앱에는 user 범위를 넣지 않습니다. 넣으면 앱마다 관리자 재승인·재설치가 늘고, 관리자가 Install을 누를 때 관리자 명의 user token이 앱마다 생깁니다.
+  - 공용 앱은 워크스페이스에 한 번만 만듭니다. user 범위(`KIT_USER_SCOPES` 15개)와 jaix 콜백만 있고 봇·이벤트·Socket Mode는 없습니다. 관리자가 설치할 것은 없고, 구성원이 jaix에서 허용을 누릅니다. 앱 승인 요청이 뜨면 관리 화면에서 한 번 승인합니다.
+
+    ```sh
+    python3 scripts/provision_app.py create-oauth-app      # 이름 기본값 "JAIX Slack 연결", --name 으로 바꿈
+    ```
+
+  - client id/secret은 studio의 `~/.local/share/jaix-secrets/slack-apps.json`에 `{"app_id", "client_id", "client_secret"}`로 저장됩니다(0600, 임시 파일 → 교체). ji-gw-ai `deploy.toml [slack] apps_file`이 이 파일을 읽습니다. 서명 비밀은 쓰지 않으므로 저장하지 않습니다. 경로는 `HERMES_SLACKBOT_APP_SECRETS`로 바꿀 수 있고, 파일이 이미 있으면 `--force` 없이는 다시 만들지 않습니다.
+  - 공용 앱은 레지스트리에 넣지 않습니다. 그래서 `update-all`이 이 앱에 키트 매니페스트를 덮어쓰는 일이 없습니다.
 - 흐름: jaix에서 "Slack 본인 권한 연결" → 브라우저에서 구성원이 **허용** → jaix 서버(원내망)가 토큰으로 바꿔 1회용으로 PC에 전달 → `setup_pc.py <아이디> --user U… --secrets-file f.json`(`user_token`만 든 파일) → `SLACK_USER_TOKEN` 저장, `slack-tools` 설치·설정, 게이트웨이 재시작.
-- 끄기: 구성원 PC에서 `hermes plugins disable slack-tools` 후 게이트웨이 재시작. 토큰 폐기는 구성원 본인이 Slack에서 앱 연결을 해제하면 됩니다. 앱의 *Revoke Tokens*는 봇 토큰까지 함께 폐기하므로 쓰지 않습니다.
+- 끄기: 구성원 PC에서 `hermes plugins disable slack-tools` 후 게이트웨이 재시작. 토큰 폐기는 구성원 본인이 Slack에서 공용 앱 연결을 해제하면 됩니다. 공용 앱의 *Revoke Tokens*는 **모든 구성원의** user token을 한꺼번에 폐기하므로 한 사람만 끊을 때는 쓰지 않습니다.
 
 ## jaix-setup 경로: 연결 코드 하나로 (관리자가 토큰을 놓는다)
 

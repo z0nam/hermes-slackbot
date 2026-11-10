@@ -6,7 +6,8 @@ in sync with your Hermes version) and changes only:
   * app name + bot display name  -> "Hermes-<id>"
   * slash commands               -> just "/hermes-<id>"  (needs the slack-namespace plugin)
   * bot scopes                   -> + groups:write, chat:write.customize  (KIT_BOT_SCOPES)
-  * user scopes + redirect URL   -> the owner's own user token for slack-tools  (KIT_USER_SCOPES)
+  * KIT_USER_SCOPES are NOT on member apps: members' user tokens come from one shared OAuth app
+    (oauth_app_manifest, created once by `provision_app.py create-oauth-app`)
 
 Usage:
     python make_manifest.py <id> [--out PATH] [--description TEXT]
@@ -40,7 +41,8 @@ KIT_USER_SCOPES = [
     "channels:read", "groups:read", "im:read", "mpim:read", "users:read",
     "files:read", "files:write", "chat:write", "im:write",
 ]
-# Where Slack sends the owner back after "Allow" (the jaix share server exchanges the code).
+# User scopes of the shared OAuth app (one app for everyone's own user token; slack-tools uses it).
+# Where Slack sends the member back after "Allow" (the jaix share server exchanges the code).
 OAUTH_REDIRECT_URL = os.environ.get("HERMES_SLACKBOT_OAUTH_REDIRECT",
                                     "https://jaix.namun.net/slack/oauth/callback")
 
@@ -80,17 +82,28 @@ def namespace(manifest: dict, ident: str) -> dict:
 
 
 def with_kit_scopes(manifest: dict) -> dict:
-    """Add KIT_BOT_SCOPES, KIT_USER_SCOPES and the OAuth redirect, keeping existing entries. (pure)"""
+    """Add KIT_BOT_SCOPES, keeping existing entries. (pure)"""
     m = json.loads(json.dumps(manifest))
-    oauth = m.setdefault("oauth_config", {})
-    for kind, wanted in (("bot", KIT_BOT_SCOPES), ("user", KIT_USER_SCOPES)):
-        scopes = oauth.setdefault("scopes", {}).setdefault(kind, [])
-        scopes.extend(s for s in wanted if s not in scopes)
-    if OAUTH_REDIRECT_URL:
-        urls = oauth.setdefault("redirect_urls", [])
-        if OAUTH_REDIRECT_URL not in urls:
-            urls.append(OAUTH_REDIRECT_URL)
+    scopes = m.setdefault("oauth_config", {}).setdefault("scopes", {}).setdefault("bot", [])
+    scopes.extend(s for s in KIT_BOT_SCOPES if s not in scopes)
     return m
+
+
+OAUTH_APP_NAME = "JAIX Slack 연결"
+
+
+def oauth_app_manifest(name: str = OAUTH_APP_NAME) -> dict:
+    """The one shared app members authorize to give their own Hermes a user token: user scopes and the
+    jaix callback only — no bot, no events, no Socket Mode. (pure — for tests)"""
+    return {
+        "_metadata": {"major_version": 1, "minor_version": 1},
+        "display_information": {
+            "name": name,
+            "description": "Connects your own Slack account to your Hermes (DMs, private channels, files)",
+        },
+        "oauth_config": {"redirect_urls": [OAUTH_REDIRECT_URL], "scopes": {"user": list(KIT_USER_SCOPES)}},
+        "settings": {"org_deploy_enabled": False, "socket_mode_enabled": False, "token_rotation_enabled": False},
+    }
 
 
 def kit_manifest(manifest: dict, ident: str) -> dict:

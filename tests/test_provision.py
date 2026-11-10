@@ -76,6 +76,31 @@ class Provision(unittest.TestCase):
         with mock.patch.object(self.pa, "call", fake), self.assertRaises(SystemExit):
             self.pa.cmd_create(NS(id="alice", user="U1", force=False))  # already registered
 
+    def test_create_oauth_app_stores_credentials_0600(self):
+        self.pa.save_refresh("xoxe-1")
+        manifests = []
+
+        def fake(method, **p):
+            if method == "tooling.tokens.rotate":
+                return {"ok": True, "token": "t", "refresh_token": "xoxe-2"}
+            if method == "apps.manifest.create":
+                manifests.append(json.loads(p["manifest"]))
+                return {"ok": True, "app_id": "A7", "credentials": {"client_id": "1.2", "client_secret": "SECRET-xyz",
+                                                                     "signing_secret": "SIGN-abc"}}
+            return {"ok": True}
+        with mock.patch.object(self.pa, "call", fake), mock.patch("builtins.print"):
+            self.pa.cmd_create_oauth_app(NS(name="JAIX Slack 연결", force=False))
+            with self.assertRaises(SystemExit):          # once only, unless --force
+                self.pa.cmd_create_oauth_app(NS(name="JAIX Slack 연결", force=False))
+        self.assertEqual(manifests[0]["display_information"]["name"], "JAIX Slack 연결")
+        self.assertIn("im:history", manifests[0]["oauth_config"]["scopes"]["user"])
+        f = Path(self.tmp.name, "slack-apps.json")
+        self.assertEqual(self.pa.APP_SECRETS, f)        # test conf keeps the real path untouched
+        self.assertEqual(json.loads(f.read_text()), {"app_id": "A7", "client_id": "1.2", "client_secret": "SECRET-xyz"})
+        self.assertEqual(oct(f.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(self.pa.load_registry(), {})    # not a Hermes app: update-all must never touch it
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["config-refresh-token", "slack-apps.json"])
+
     def test_call_waits_out_rate_limit(self):
         import io
         import urllib.error
