@@ -219,7 +219,7 @@ def kit_changes(cur: dict, new: dict) -> list:
     for path in changed_paths(cur, new):
         if path == "/_metadata" or at(new, path) is None:
             continue
-        if path == "/oauth_config/scopes/bot":
+        if path in ("/oauth_config/scopes/bot", "/oauth_config/scopes/user"):
             old_s, new_s = set(at(cur, path) or []), set(at(new, path) or [])
             delta = [f"+{x}" for x in sorted(new_s - old_s)] + [f"-{x}" for x in sorted(old_s - new_s)]
             if not delta:

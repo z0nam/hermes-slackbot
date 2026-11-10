@@ -6,6 +6,7 @@ in sync with your Hermes version) and changes only:
   * app name + bot display name  -> "Hermes-<id>"
   * slash commands               -> just "/hermes-<id>"  (needs the slack-namespace plugin)
   * bot scopes                   -> + groups:write, chat:write.customize  (KIT_BOT_SCOPES)
+  * user scopes + redirect URL   -> the owner's own user token for slack-tools  (KIT_USER_SCOPES)
 
 Usage:
     python make_manifest.py <id> [--out PATH] [--description TEXT]
@@ -17,6 +18,7 @@ Stdlib only; works on Windows, macOS and Linux.
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -29,6 +31,18 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,20}$")  # Slack: lowercase, max 32 ch
 #                        is_private) and invite the owner (conversations.invite)
 #   chat:write.customize slack-model-display sets the per-post username "Hermes-<id> (<model>)"
 KIT_BOT_SCOPES = ["groups:write", "chat:write.customize"]
+
+# User-token scopes the OWNER grants for themselves (jaix OAuth, never the admin on their behalf), so
+# slack-tools can read their DMs/private channels, search, and handle files. Writes still ask per call.
+KIT_USER_SCOPES = [
+    "identify", "search:read",
+    "channels:history", "groups:history", "im:history", "mpim:history",
+    "channels:read", "groups:read", "im:read", "mpim:read", "users:read",
+    "files:read", "files:write", "chat:write", "im:write",
+]
+# Where Slack sends the owner back after "Allow" (the jaix share server exchanges the code).
+OAUTH_REDIRECT_URL = os.environ.get("HERMES_SLACKBOT_OAUTH_REDIRECT",
+                                    "https://jaix.namun.net/slack/oauth/callback")
 
 
 def hermes_manifest(name: str, description: str) -> dict:
@@ -66,10 +80,16 @@ def namespace(manifest: dict, ident: str) -> dict:
 
 
 def with_kit_scopes(manifest: dict) -> dict:
-    """Add KIT_BOT_SCOPES to the bot scopes, keeping order and existing entries. (pure)"""
+    """Add KIT_BOT_SCOPES, KIT_USER_SCOPES and the OAuth redirect, keeping existing entries. (pure)"""
     m = json.loads(json.dumps(manifest))
-    scopes = m.setdefault("oauth_config", {}).setdefault("scopes", {}).setdefault("bot", [])
-    scopes.extend(s for s in KIT_BOT_SCOPES if s not in scopes)
+    oauth = m.setdefault("oauth_config", {})
+    for kind, wanted in (("bot", KIT_BOT_SCOPES), ("user", KIT_USER_SCOPES)):
+        scopes = oauth.setdefault("scopes", {}).setdefault(kind, [])
+        scopes.extend(s for s in wanted if s not in scopes)
+    if OAUTH_REDIRECT_URL:
+        urls = oauth.setdefault("redirect_urls", [])
+        if OAUTH_REDIRECT_URL not in urls:
+            urls.append(OAUTH_REDIRECT_URL)
     return m
 
 

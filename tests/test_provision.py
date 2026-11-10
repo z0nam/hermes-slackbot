@@ -224,12 +224,91 @@ class SetupPc(unittest.TestCase):
     def test_read_secrets_deletes_file_even_when_bad(self):
         with tempfile.TemporaryDirectory() as d:
             f = self._secrets(d)
-            self.assertEqual(self.sp.read_secrets(f), ("xoxb-TEST-1", "xapp-TEST-1"))
+            self.assertEqual(self.sp.read_secrets(f), {"bot": "xoxb-TEST-1", "app": "xapp-TEST-1", "user": ""})
             self.assertFalse(f.exists())
             bad = self._secrets(d, app_token="nope")
             with self.assertRaises(SystemExit):
                 self.sp.read_secrets(bad)
             self.assertFalse(bad.exists())
+
+    def test_read_secrets_user_token_alone_or_with_bot(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "u.json"
+            f.write_text(json.dumps({"user_token": "xoxp-TEST-9"}), encoding="utf-8")
+            self.assertEqual(self.sp.read_secrets(f), {"bot": "", "app": "", "user": "xoxp-TEST-9"})
+            self.assertEqual(self.sp.read_secrets(self._secrets(d, user_token="xoxp-TEST-9"))["user"], "xoxp-TEST-9")
+            for bad in ({"user_token": "xoxb-TEST-9"}, {"bot_token": "xoxb-TEST-1", "user_token": "xoxp-TEST-9"}):
+                f.write_text(json.dumps(bad), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    self.sp.read_secrets(f)
+                self.assertFalse(f.exists())
+
+    def test_slack_tools_settings_run_bundled_sapi_per_call(self):
+        env = Path("/h/.env")
+        got = dict(self.sp.slack_tools_settings(env, "/py/python", "example.slack.com"))
+        pre = "plugins.entries.slack-tools.settings."
+        self.assertEqual(json.loads(got[pre + "executable"]), ["/py/python", str(Path("/h/plugins/slack-tools/sapi.py"))])
+        self.assertEqual(json.loads(got[pre + "workspace_hosts"]), ["example.slack.com"])
+        self.assertEqual(got[pre + "approval_policy"], "per_call")
+        self.assertEqual(got[pre + "download_dir"], str(Path("/h/cache/slack-files")))
+
+    def test_enable_user_token_refuses_someone_elses_token(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            env.write_text("SLACK_BOT_TOKEN=xoxb-TEST-1\n", encoding="utf-8")
+            auth = {"ok": True, "user_id": "UADMIN0001", "url": "https://example.slack.com/"}
+            with mock.patch.object(self.sp, "slack", return_value=auth), \
+                    mock.patch.object(self.sp.install, "run") as run, \
+                    mock.patch.object(self.sp.subprocess, "run") as sub, self.assertRaises(SystemExit) as e:
+                self.sp.enable_user_token(env, "xoxp-TEST-9", "UOWNER0001")
+            self.assertIn("different Slack user", str(e.exception))
+            self.assertNotIn("SLACK_USER_TOKEN", env.read_text(encoding="utf-8"))
+            run.assert_not_called()
+            sub.assert_not_called()
+
+    def test_enable_user_token_stores_and_configures_for_owner(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            auth = {"ok": True, "user_id": "UOWNER0001", "url": "https://example.slack.com/"}
+            with mock.patch.object(self.sp, "slack", return_value=auth), \
+                    mock.patch.object(self.sp.install, "run") as run, \
+                    mock.patch.object(self.sp.subprocess, "run", return_value=mock.Mock(returncode=0)) as sub, \
+                    mock.patch("builtins.print"):
+                self.sp.enable_user_token(env, "xoxp-TEST-9", "UOWNER0001")
+            self.assertIn("SLACK_USER_TOKEN=xoxp-TEST-9", env.read_text(encoding="utf-8"))
+            self.assertIn("--tools-only", sub.call_args.args[0])
+            keys = [c.args[2] for c in run.call_args_list if c.args[:2] == ("config", "set")]
+            self.assertIn("plugins.entries.slack-tools.settings.approval_policy", keys)
+            self.assertIn(mock.call("tools", "enable", "slack", "--platform", "slack"), run.call_args_list)
+            for c in run.call_args_list + sub.call_args_list:  # the token never goes on a command line
+                self.assertNotIn("xoxp-TEST-9", json.dumps([str(x) for x in c.args]))
+
+    def test_user_token_only_requires_bot_already_owned_by_user(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            for text in ("SLACK_BOT_TOKEN=xoxb-T\nSLACK_ALLOWED_USERS=UOTHER0001\n",
+                         "SLACK_BOT_TOKEN=xoxb-T\nSLACK_ALLOWED_USERS=UOWNER0001,UOTHER0001\n",
+                         "SLACK_ALLOWED_USERS=UOWNER0001\n"):
+                env.write_text(text, encoding="utf-8")
+                f = Path(d) / "u.json"
+                f.write_text(json.dumps({"user_token": "xoxp-TEST-9"}), encoding="utf-8")
+                argv = ["setup_pc.py", "alice", "--user", "UOWNER0001", "--secrets-file", str(f)]
+                with mock.patch.object(self.sp.install, "run", return_value=str(env)), \
+                        mock.patch.object(self.sp, "enable_user_token") as enable, \
+                        mock.patch.object(sys, "argv", argv), mock.patch("builtins.print"), \
+                        self.assertRaises(SystemExit) as e:
+                    self.sp.main()
+                self.assertIn("not set up for --user alone", str(e.exception))
+                enable.assert_not_called()
+                self.assertFalse(f.exists())
+            env.write_text("SLACK_BOT_TOKEN=xoxb-T\nSLACK_ALLOWED_USERS=UOWNER0001\n", encoding="utf-8")
+            f.write_text(json.dumps({"user_token": "xoxp-TEST-9"}), encoding="utf-8")
+            argv = ["setup_pc.py", "alice", "--user", "UOWNER0001", "--secrets-file", str(f), "--no-restart"]
+            with mock.patch.object(self.sp.install, "run", return_value=str(env)), \
+                    mock.patch.object(self.sp, "enable_user_token") as enable, \
+                    mock.patch.object(sys, "argv", argv), mock.patch("builtins.print"):
+                self.sp.main()
+            enable.assert_called_once_with(env, "xoxp-TEST-9", "UOWNER0001")
 
     def test_read_secrets_stops_when_delete_fails(self):
         with tempfile.TemporaryDirectory() as d:
