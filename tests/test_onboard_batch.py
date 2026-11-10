@@ -34,6 +34,13 @@ class Pure(unittest.TestCase):
         todo, _ = ob.plan(roster, REG, {"aa": {"status": "done"}}, only={"aa"})
         self.assertEqual([t[1] for t in todo], ["aa"])          # --only redoes a done person
 
+    def test_jaix_command_expands_home(self):
+        home = os.path.expanduser("~")
+        self.assertEqual(ob.resolve_jaix('uv run -q --project ~/dev/jaix-kit jaix'),
+                         ["uv", "run", "-q", "--project", f"{home}/dev/jaix-kit", "jaix"])
+        self.assertEqual(ob.resolve_jaix("uv run --project=~/k jaix")[2], f"--project={home}/k")
+        self.assertEqual(ob.resolve_jaix("a=~b x~y")[0:2], ["a=~b", "x~y"])
+
     def test_find_code_takes_last(self):
         self.assertEqual(ob.find_code(f"x {CODE_A}\n  {CODE_B}\n"), CODE_B)
         self.assertIsNone(ob.find_code("JX-short"))

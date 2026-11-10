@@ -131,9 +131,17 @@ def run_handoff(jaix: list, ident: str, user: str, again: bool = False, echo=pri
     return proc.wait(), find_code("".join(seen))
 
 
+def expand_home(token: str) -> str:
+    """`~/x` and `--opt=~/x` -> absolute. No shell runs the command, so nothing else expands them."""
+    key, sep, val = token.partition("=")
+    if sep and key.startswith("-") and val.startswith("~"):
+        return f"{key}={os.path.expanduser(val)}"
+    return os.path.expanduser(token) if token.startswith("~") else token
+
+
 def resolve_jaix(arg: str | None) -> list:
     if arg:
-        return shlex.split(arg)
+        return [expand_home(t) for t in shlex.split(arg)]
     found = shutil.which("jaix")
     if not found:
         sys.exit('`jaix` is not on PATH. Pass it explicitly, e.g. --jaix "uv run -q --project ~/dev/jaix-kit jaix"')
