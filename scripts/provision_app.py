@@ -10,6 +10,8 @@ The admin owns every app, so the teammate never touches api.slack.com except to 
     python provision_app.py update-all [--dry-run]  # re-apply the kit manifest to every app
     python provision_app.py rename <old> <new> [--dry-run]  # Hermes-<old> -> Hermes-<new>, same app
 
+After creating many apps, onboard_batch.py walks the remaining clicks and `jaix hermes handoff`.
+
 App configuration tokens expire after 12 hours, but each rotation also returns a new refresh
 token, so the stored refresh token keeps working for as long as it is rotated. Every run rotates
 first and stores the new refresh token before using the access token. If Slack ever answers

@@ -148,6 +148,25 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
    - 토큰은 슬랙 메시지나 메일로 보내지 않습니다. **연결 코드는 슬랙 DM으로 보내도 됩니다.** 코드는 토큰이 아니고, 원내망에서 한 번만 쓸 수 있으며, 남이 먼저 쓰면 구성원 설치가 "이미 사용됨"으로 실패해서 드러납니다.
 3. 구성원은 `jaix-setup.exe`에서 "슬랙으로도 쓰기"를 고르고 연결 코드를 붙여 넣습니다. jaix가 Hermes 설치, `setup_pc.py --secrets-file`(무인), 게이트웨이 등록까지 합니다.
 
+### 여러 명을 한 번에: `onboard_batch.py`
+
+앱을 여러 개 만든 뒤에는 2번(설치·App-Level Token)과 `handoff`를 사람마다 터미널 한 화면에서 이어 갑니다. 1인당 1-2분 걸립니다.
+
+```sh
+# studio: jaix 는 PATH 에 두지 않고 jaix-kit main 체크아웃에서 돌린다(재발급 확인 --again 이 든 판이 필요)
+git -C ~/dev/jaix-kit pull -q
+python3 scripts/onboard_batch.py --roster ~/명단.tsv --jaix "uv run -q --project ~/dev/jaix-kit jaix"
+```
+
+- **명단**은 머리줄이 있는 TSV·CSV입니다. 첫 열은 이름이고, `U…` 모양의 칸을 멤버 ID로 읽습니다. 개인정보이므로 저장소 밖에 둡니다. 레지스트리(`apps.json`)에서 그 멤버가 주인인 앱만 진행하고, 앱이 없는 사람은 이름만 알려 줍니다.
+- **사람마다 하는 일**
+  1. Install 페이지가 열리면 [허용]을 누르고 Enter를 칩니다.
+  2. Basic Information과 OAuth & Permissions가 열리면 App-Level Token(`connections:write`)을 만들고 Enter를 칩니다.
+  3. `jaix hermes handoff`의 숨김 입력에 xoxb와 xapp를 차례로 붙여 넣습니다. 도구는 터미널을 jaix에 그대로 넘기므로 토큰을 보지 않습니다. jaix 출력(stdout)에서 JX 코드만 골라냅니다.
+- 사람 사이에서는 Enter=시작, `s`=건너뛰기, `q`=중단입니다. 진행 기록은 `~/.config/hermes-slackbot/onboard-progress.json`에 남습니다. 같은 명령을 다시 실행하면 끝난 사람은 빼고, 건너뛴 사람부터 다시 묻습니다. 끝난 사람을 다시 하려면 `--only <아이디>`를 씁니다.
+- 이미 코드를 낸 사람은 jaix가 종료 코드 3으로 멈춥니다. 이때 도구가 `--again`으로 다시 낼지 묻고, 묻지 않고 다시 내는 일은 없습니다.
+- **DM용 코드 모음**은 `~/.config/hermes-slackbot/jx-codes-<날짜>.txt`(0600)에 "이름 · 코드"로 한 줄씩 쌓입니다. 다 보낸 뒤에는 지웁니다.
+
 **유출이 의심되거나 퇴사·PC 교체 때**: 앱 설정에서 *OAuth & Permissions → Revoke Tokens*, *Basic Information → App-Level Tokens → Revoke*를 누르고 재설치한 뒤 `handoff`를 다시 합니다. 급하면 앱을 지웁니다.
 
 `setup_pc.py`의 무인 옵션:
