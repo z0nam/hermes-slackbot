@@ -7,6 +7,7 @@ The admin owns every app, so the teammate never touches api.slack.com except to 
     python provision_app.py token check          # rotate now and confirm it still works
     python provision_app.py create <id> --user U…  # create Hermes-<id>, print the remaining clicks
     python provision_app.py list                 # apps this machine created
+    python provision_app.py create-oauth-app     # once: shared app for members' own user tokens (jaix OAuth)
     python provision_app.py update-all [--dry-run]  # re-apply the kit manifest to every app
     python provision_app.py rename <old> <new> [--dry-run]  # Hermes-<old> -> Hermes-<new>, same app
 
@@ -42,6 +43,12 @@ import make_manifest  # noqa: E402
 CONF = Path(os.environ.get("HERMES_SLACKBOT_CONF") or Path.home() / ".config" / "hermes-slackbot")
 REGISTRY = CONF / "apps.json"
 TOKEN_FILE = CONF / "config-refresh-token"
+# The shared OAuth app's credentials for the jaix server (share_server reads it via deploy.toml [slack]
+# apps_file): {"app_id", "client_id", "client_secret"}, 0600. With HERMES_SLACKBOT_CONF set (tests, other
+# setups) it defaults next to the registry so nothing touches the real file.
+APP_SECRETS = Path(os.environ.get("HERMES_SLACKBOT_APP_SECRETS")
+                   or (CONF / "slack-apps.json" if "HERMES_SLACKBOT_CONF" in os.environ
+                       else Path.home() / ".local" / "share" / "jaix-secrets" / "slack-apps.json"))
 KEYCHAIN = ("hermes-slackbot-config-token", "refresh")
 API = "https://slack.com/api/"
 
@@ -125,6 +132,22 @@ def save_registry(reg: dict) -> None:
     REGISTRY.write_text(json.dumps(reg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def write_secret_json(path: Path, data: dict) -> None:
+    """Atomic write (temp file + replace), 0600 from creation, parent folder 0700."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(path.parent, 0o700)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def kit_manifest(ident: str) -> dict:
     desc = f"Personal Hermes agent ({ident}) — only its owner can use it"
     return make_manifest.kit_manifest(make_manifest.hermes_manifest(f"Hermes-{ident}", desc), ident)
@@ -189,6 +212,24 @@ def cmd_create(a) -> None:
     for label, url in links(app_id):
         print(f"  {label}\n    {url}")
     print(f"\nOn the teammate's PC (PowerShell), when the two tokens are ready:\n  {setup_line(ident, a.user)}")
+
+
+def cmd_create_oauth_app(a) -> None:
+    """Create the one shared OAuth app members authorize for their own user token (once per workspace)."""
+    if APP_SECRETS.exists() and not a.force:
+        sys.exit(f"{APP_SECRETS} already exists (shared OAuth app made before). Use --force to make another.")
+    manifest = json.dumps(make_manifest.oauth_app_manifest(a.name), ensure_ascii=False)
+    tok = access_token()
+    check(call("apps.manifest.validate", token=tok, manifest=manifest), "apps.manifest.validate")
+    res = check(call("apps.manifest.create", token=tok, manifest=manifest), "apps.manifest.create")
+    cred = res.get("credentials") or {}
+    if not (cred.get("client_id") and cred.get("client_secret")):
+        sys.exit(f"created {res['app_id']} but Slack returned no client credentials — copy them from "
+                 f"https://api.slack.com/apps/{res['app_id']}/general into {APP_SECRETS} by hand.")
+    write_secret_json(APP_SECRETS, {"app_id": res["app_id"], "client_id": cred["client_id"],
+                                    "client_secret": cred["client_secret"]})  # signing secret: not used
+    print(f"created {a.name}  ({res['app_id']})\nclient id/secret stored in {APP_SECRETS} (0600)")
+    print(f"Nothing to install: members authorize it from jaix. Settings: https://api.slack.com/apps/{res['app_id']}")
 
 
 def cmd_list(a) -> None:
@@ -312,6 +353,9 @@ def main() -> None:
     c.add_argument("--user", required=True, help="owner's Slack member ID (U…)")
     c.add_argument("--force", action="store_true", help="create again even if the id is registered")
     sub.add_parser("list", help="apps created from this machine")
+    o = sub.add_parser("create-oauth-app", help="create the shared OAuth app for members' own user tokens (once)")
+    o.add_argument("--name", default=make_manifest.OAUTH_APP_NAME)
+    o.add_argument("--force", action="store_true", help="create another even if the credentials file exists")
     u = sub.add_parser("update-all", help="re-apply the kit manifest to every registered app")
     u.add_argument("--dry-run", action="store_true", help="show what would change, update nothing")
     r = sub.add_parser("rename", help="rename Hermes-<old> to Hermes-<new> in place (same app and tokens)")
@@ -320,7 +364,7 @@ def main() -> None:
     r.add_argument("--dry-run", action="store_true", help="show what would change, update nothing")
     a = ap.parse_args()
     {"token": cmd_token, "create": cmd_create, "list": cmd_list, "update-all": cmd_update_all,
-     "rename": cmd_rename}[a.cmd](a)
+     "rename": cmd_rename, "create-oauth-app": cmd_create_oauth_app}[a.cmd](a)
 
 
 if __name__ == "__main__":

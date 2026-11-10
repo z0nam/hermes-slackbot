@@ -166,16 +166,24 @@ class Manifest(unittest.TestCase):
         bot = m["oauth_config"]["scopes"]["bot"]
         self.assertEqual(bot, ["chat:write", "commands", "groups:write", "chat:write.customize"])
         self.assertEqual(mk.with_kit_scopes(m)["oauth_config"]["scopes"]["bot"], bot)  # idempotent
+        self.assertNotIn("user", m["oauth_config"]["scopes"])    # members' user tokens come from the shared app
+        self.assertNotIn("redirect_urls", m["oauth_config"])
+        self.assertEqual(m["display_information"]["name"], "Hermes-alice")
+        self.assertEqual(self.BASE["oauth_config"]["scopes"]["bot"], ["chat:write", "commands"])
+        self.assertEqual(mk.namespace(self.BASE, "alice")["oauth_config"], self.BASE["oauth_config"])
+
+    def test_oauth_app_manifest_user_scopes_only(self):
+        m = mk.oauth_app_manifest()
         user = m["oauth_config"]["scopes"]["user"]
         self.assertIn("im:history", user)
         self.assertIn("files:write", user)
         self.assertNotIn("admin", user)
-        self.assertEqual(mk.with_kit_scopes(m)["oauth_config"]["scopes"]["user"], user)
+        self.assertNotIn("bot", m["oauth_config"]["scopes"])
+        self.assertNotIn("features", m)
         self.assertEqual(m["oauth_config"]["redirect_urls"], [mk.OAUTH_REDIRECT_URL])
         self.assertTrue(mk.OAUTH_REDIRECT_URL.startswith("https://"))
-        self.assertEqual(m["display_information"]["name"], "Hermes-alice")
-        self.assertEqual(self.BASE["oauth_config"]["scopes"]["bot"], ["chat:write", "commands"])
-        self.assertEqual(mk.namespace(self.BASE, "alice")["oauth_config"], self.BASE["oauth_config"])
+        self.assertFalse(m["settings"]["socket_mode_enabled"])
+        self.assertFalse(m["settings"]["token_rotation_enabled"])
 
     def test_bad_id(self):
         for bad in ["", "Alice", "a b", "x" * 30, "-a"]:
