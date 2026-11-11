@@ -152,6 +152,46 @@ def dm_channel(bot: str, user: str) -> str | None:
     return (r.get("channel") or {}).get("id") if r.get("ok") else None
 
 
+def find_private_channel(bot: str, name: str) -> str | None:
+    """A non-archived private channel called `name` that the bot is in (bots only list channels they belong to)."""
+    cursor = ""
+    for _ in range(50):
+        r = slack("conversations.list", bot, types="private_channel", exclude_archived="true",
+                  limit="200", **({"cursor": cursor} if cursor else {}))
+        if not r.get("ok"):
+            return None
+        for ch in r.get("channels") or []:
+            if ch.get("name") == name:
+                return ch.get("id")
+        cursor = (r.get("response_metadata") or {}).get("next_cursor") or ""
+        if not cursor:
+            return None
+    return None
+
+
+def ensure_owner_channel(bot: str, ident: str, owner: str) -> str:
+    """Private channel "hermes-<id>" holding just the owner and their bot, made with the bot token
+    (groups:write). Idempotent: an existing one the bot is in only gets the owner invited.
+    Returns a one-line status; never raises and never prints channel IDs (public repo, shared logs)."""
+    name = f"hermes-{ident}"
+    try:
+        r = slack("conversations.create", bot, name=name, is_private="true")
+        if r.get("ok"):
+            cid, made = (r.get("channel") or {}).get("id"), True
+        elif r.get("error") == "name_taken":
+            cid, made = find_private_channel(bot, name), False
+            if not cid:
+                return f"note: a channel named #{name} already exists and this bot is not in it; skipped"
+        else:
+            return f"note: could not create #{name} ({r.get('error')}); skipped"
+        inv = slack("conversations.invite", bot, channel=cid, users=owner)
+    except (OSError, ValueError) as e:
+        return f"note: could not reach Slack to set up #{name} ({e}); skipped"
+    if not inv.get("ok") and inv.get("error") != "already_in_channel":
+        return f"note: #{name} is ready but inviting you failed ({inv.get('error')})"
+    return f"ok: private channel #{name} " + ("created with you in it" if made else "already there; you are in it")
+
+
 def bot_name_matches(auth: dict, ident: str) -> bool:
     """auth.test 'user' is the bot user's handle; Slack drops separators there (Hermes-jitest -> 'hermesjitest',
     seen on a real app 2026-10-30), so compare with hyphens/underscores/dots removed. (pure — for tests)"""
@@ -215,6 +255,7 @@ def main() -> None:
         if saved:
             print(f"  backed up {env_path.name} → {saved.name}")
         enable_user_token(env_path, secrets["user"], a.user)
+        print("  " + ensure_owner_channel(env_value(existing, "SLACK_BOT_TOKEN"), ident, a.user))
         if not a.no_restart:
             install.run("gateway", "restart")
             print("  gateway restarted")
@@ -259,6 +300,7 @@ def main() -> None:
     else:
         print("  note: could not open the owner's DM to set SLACK_HOME_CHANNEL; Hermes will ask once (/sethome)")
     print("  wrote SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_ALLOWED_USERS" + (", SLACK_HOME_CHANNEL" if home else ""))
+    print("  " + ensure_owner_channel(bot, ident, a.user))
 
     r = subprocess.run([sys.executable, str(HERE / "install.py"), ident])
     if r.returncode != 0:

@@ -99,7 +99,7 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
 
 키트 매니페스트에 봇 권한 두 개가 추가됐습니다. 그 전에 만든 앱은 아래 순서로 맞춥니다. **순서가 중요합니다.** 재설치(3단계)를 마치기 전에 구성원 PC에 새 플러그인을 깔면, `slack-model-display`가 권한 없이 보낸 사람 이름을 바꾸려 하게 됩니다.
 
-- `groups:write`: 봇이 주인 전용 비공개 채널 `hermes-<아이디>`를 만들고 주인을 초대합니다(`conversations.create`, `conversations.invite`).
+- `groups:write`: 봇이 주인 전용 비공개 채널 `hermes-<아이디>`를 만들고 주인을 초대합니다(`conversations.create`, `conversations.invite`). 구성원 PC의 `setup_pc.py`가 봇 토큰으로 직접 하며(관리자 토큰은 쓰지 않음), 이미 있으면 주인 초대만 합니다. 연결이 끝난 PC는 다음 `setup_pc` 실행(예: `jaix hermes slack-access`) 때 만들어집니다.
 - `chat:write.customize`: 답변의 보낸 사람 이름을 `Hermes-<아이디> (모델명)`으로 바꿉니다(`slack-model-display`).
 
 1. studio의 키트를 최신으로 맞춥니다: `git -C ~/dev/hermes-slackbot pull`
