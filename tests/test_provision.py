@@ -240,6 +240,52 @@ class SetupPc(unittest.TestCase):
         self.assertEqual(self.sp.seen_markers(log, "alice"), {"slash handler", "slack connected"})
         self.assertEqual(self.sp.seen_markers(log, "bob"), {"slack connected"})
 
+    def _fake_slack(self, replies):
+        calls = []
+        def fake(method, token, **params):
+            calls.append((method, params))
+            r = replies[method]
+            return r.pop(0) if isinstance(r, list) else r
+        return fake, calls
+
+    def test_owner_channel_created_private_and_owner_invited(self):
+        fake, calls = self._fake_slack({"conversations.create": {"ok": True, "channel": {"id": "GTEST0001"}},
+                                        "conversations.invite": {"ok": True}})
+        with mock.patch.object(self.sp, "slack", fake):
+            msg = self.sp.ensure_owner_channel("xoxb-TEST-1", "alice", "UOWNER0001")
+        self.assertTrue(msg.startswith("ok:"))
+        self.assertNotIn("GTEST0001", msg)  # never print channel IDs
+        self.assertEqual(calls[0], ("conversations.create", {"name": "hermes-alice", "is_private": "true"}))
+        self.assertEqual(calls[1], ("conversations.invite", {"channel": "GTEST0001", "users": "UOWNER0001"}))
+
+    def test_owner_channel_is_idempotent_when_name_taken(self):
+        page1 = {"ok": True, "channels": [{"id": "GOTHER001", "name": "x"}],
+                 "response_metadata": {"next_cursor": "c2"}}
+        page2 = {"ok": True, "channels": [{"id": "GTEST0001", "name": "hermes-alice"}]}
+        fake, calls = self._fake_slack({"conversations.create": {"ok": False, "error": "name_taken"},
+                                        "conversations.list": [page1, page2],
+                                        "conversations.invite": {"ok": False, "error": "already_in_channel"}})
+        with mock.patch.object(self.sp, "slack", fake):
+            msg = self.sp.ensure_owner_channel("xoxb-TEST-1", "alice", "UOWNER0001")
+        self.assertTrue(msg.startswith("ok:"), msg)
+        self.assertEqual(calls[2][1].get("cursor"), "c2")
+        self.assertEqual(calls[-1], ("conversations.invite", {"channel": "GTEST0001", "users": "UOWNER0001"}))
+
+    def test_owner_channel_skips_name_taken_by_a_channel_the_bot_is_not_in(self):
+        fake, calls = self._fake_slack({"conversations.create": {"ok": False, "error": "name_taken"},
+                                        "conversations.list": {"ok": True, "channels": []}})
+        with mock.patch.object(self.sp, "slack", fake):
+            msg = self.sp.ensure_owner_channel("xoxb-TEST-1", "alice", "UOWNER0001")
+        self.assertTrue(msg.startswith("note:"))
+        self.assertNotIn("conversations.invite", [c[0] for c in calls])
+
+    def test_owner_channel_never_raises(self):
+        fake, _ = self._fake_slack({"conversations.create": {"ok": False, "error": "missing_scope"}})
+        with mock.patch.object(self.sp, "slack", fake):
+            self.assertIn("missing_scope", self.sp.ensure_owner_channel("xoxb-TEST-1", "alice", "UOWNER0001"))
+        with mock.patch.object(self.sp, "slack", side_effect=OSError("offline")):
+            self.assertTrue(self.sp.ensure_owner_channel("xoxb-TEST-1", "alice", "UOWNER0001").startswith("note:"))
+
     # --- unattended (--secrets-file), used by jaix-setup ---------------------------------------
     def _secrets(self, d, **over):
         f = Path(d) / "s.json"
