@@ -58,6 +58,24 @@ class ChannelMetadata(unittest.TestCase):
                     self.assertEqual(self.fixture.calls()[-2],
                                      ['conversations.setTopic', 'channel=' + channel, 'topic=' + value])
 
+    def test_mutation_response_membership_is_not_authoritative(self):
+        # Live Slack setPurpose/setTopic returned is_member=False while the
+        # authoritative conversations.info immediately before/after was True.
+        for field in ('purpose', 'topic'):
+            with self.subTest(field=field):
+                self.fixture.log.unlink(missing_ok=True)
+                after = info('new', field=field)
+                mutation = dict(after, is_member=False)
+                client = self.fixture.client([
+                    {'ok': True, 'user_id': OWNER},
+                    {'ok': True, 'channel': info(field=field)},
+                    {'ok': True, 'channel': mutation},
+                    {'ok': True, 'channel': after}])
+                result = client.write('set_' + field, channel=CHANNEL,
+                                      **{field: 'new'}, approve=lambda p: True)
+                self.assertTrue(result['verified'])
+                self.assertEqual(len(self.fixture.calls()), 4)
+
     def test_metadata_arguments_are_exclusive_bounded_strings_before_io(self):
         client = self.fixture.client([])
         for field in ('purpose', 'topic'):

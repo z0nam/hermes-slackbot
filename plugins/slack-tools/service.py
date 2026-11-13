@@ -100,9 +100,10 @@ class SlackService:
         return data
 
     @staticmethod
-    def _metadata_channel(info, channel, field):
+    def _metadata_channel(info, channel, field, *, require_membership=True):
         if (not isinstance(info, dict) or info.get('id') != channel
-                or info.get('is_member') is not True or info.get('is_im') is not False
+                or (require_membership and info.get('is_member') is not True)
+                or info.get('is_im') is not False
                 or info.get('is_mpim') is not False or not isinstance(info.get('name'), str)
                 or not isinstance(info.get(field), dict)
                 or not isinstance(info[field].get('value'), str)):
@@ -128,7 +129,10 @@ class SlackService:
         # setPurpose documents both ok-only and purpose-string success responses;
         # setTopic returns a conversation. Validate every returned target/value.
         if 'channel' in result or field == 'topic':
-            changed = self._metadata_channel(result.get('channel'), channel, field)
+            # Mutation responses may report is_member=False even for members.
+            # Membership stays mandatory on the preflight and final info reads.
+            changed = self._metadata_channel(result.get('channel'), channel, field,
+                                             require_membership=False)
             if changed[field]['value'] != value:
                 raise RuntimeError('Metadata response mismatch; do not retry automatically')
         if field in result and result[field] != value:
