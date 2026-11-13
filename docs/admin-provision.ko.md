@@ -130,7 +130,7 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
 
 - **반드시 구성원 본인이 허용을 누릅니다.** 관리자가 누르면 관리자 명의 토큰이 발급돼, 구성원 봇이 관리자의 DM을 읽고 관리자 이름으로 쓰게 됩니다. jaix 서버(콜백의 `authed_user.id`가 요청한 구성원의 레지스트리 UID와 다르면 `auth.revoke`)와 `setup_pc.py`(`auth.test` user가 `--user`와 다르면 멈춤)가 각각 확인합니다.
 - **user token은 공용 앱 하나로 받습니다**(사용자 결정 2026-11-10). 구성원별 `Hermes-<아이디>` 앱에는 user 범위를 넣지 않습니다. 넣으면 앱마다 관리자 재승인·재설치가 늘고, 관리자가 Install을 누를 때 관리자 명의 user token이 앱마다 생깁니다.
-  - 공용 앱은 워크스페이스에 한 번만 만듭니다. user 범위(`KIT_USER_SCOPES` 15개)와 jaix 콜백만 있고 봇·이벤트·Socket Mode는 없습니다. 관리자가 설치할 것은 없고, 구성원이 jaix에서 허용을 누릅니다. 앱 승인 요청이 뜨면 관리 화면에서 한 번 승인합니다.
+  - 공용 앱은 워크스페이스에 한 번만 만듭니다. user 범위(`KIT_USER_SCOPES`)와 jaix 콜백만 있고 봇·이벤트·Socket Mode는 없습니다. 관리자가 설치할 것은 없고, 구성원이 jaix에서 허용을 누릅니다. 앱 승인 요청이 뜨면 관리 화면에서 한 번 승인합니다.
 
     ```sh
     python3 scripts/provision_app.py create-oauth-app      # 이름 기본값 "JAIX Slack 연결", --name 으로 바꿈
@@ -140,6 +140,26 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
   - 공용 앱은 레지스트리에 넣지 않습니다. 그래서 `update-all`이 이 앱에 키트 매니페스트를 덮어쓰는 일이 없습니다.
 - 흐름: jaix에서 "Slack 본인 권한 연결" → 브라우저에서 구성원이 **허용** → jaix 서버(원내망)가 토큰으로 바꿔 1회용으로 PC에 전달 → `setup_pc.py <아이디> --user U… --secrets-file f.json`(`user_token`만 든 파일) → `SLACK_USER_TOKEN` 저장, `slack-tools` 설치·설정, 게이트웨이 재시작.
 - 끄기: 구성원 PC에서 `hermes plugins disable slack-tools` 후 게이트웨이 재시작. 토큰 폐기는 구성원 본인이 Slack에서 공용 앱 연결을 해제하면 됩니다. 공용 앱의 *Revoke Tokens*는 **모든 구성원의** user token을 한꺼번에 폐기하므로 한 사람만 끊을 때는 쓰지 않습니다.
+
+### 채널 설명·주제 편집 권한 갱신 (병합 후 별도 적용)
+
+`slack-tools`의 `set_purpose`(설명)·`set_topic`(주제)은 **사용자 토큰**으로 작동합니다.
+기존 공용 OAuth 앱의 **User Token Scopes**에 `channels:write.topic`·`groups:write.topic`을
+추가하고, 기존 범위와 콜백은 보존합니다. 구성원별 봇 앱이나 Bot Token Scopes에 넣지 않습니다.
+새 공용 앱 매니페스트에는 반영되지만, `update-all`은 기존 공용 앱을 갱신하지 않습니다.
+
+구성원마다 기존 **“Slack 본인 권한 연결”**을 다시 진행해 본인이 새 권한을 허용해야 합니다.
+JAIX 서버가 별도의 OAuth 범위 목록을 쓰면 그 목록에도 새 범위를 반영해야 합니다.
+관리자가 대신 허용하거나 전체 토큰을 폐기하지 않습니다. 병합된 키트가 JAIX 릴리스에 포함된 뒤
+PC에서 `jaix update`(또는 병합된 플러그인 설치), 정상 절차의 게이트웨이 재시작·새 세션을 진행합니다.
+**`jaix update`만으로 Slack OAuth 권한이 생기지는 않습니다.**
+
+두 동작 모두 채널에 이미 가입한 본인만 사용할 수 있고, 매번 실제 사람 승인이 필요합니다.
+`explicit_request` 설정도 이 승인을 생략하지 않습니다. 승인 화면은 사용자·채널·기존/새 값을
+보여주며, 빈 문자열은 의도적인 삭제입니다(최대 250자). 변경 뒤 같은 채널의 값을 다시 읽어
+일치해야 성공입니다. 불확실하면 채널을 직접 확인하며 자동 재시도하지 않습니다.
+개발 테스트는 실제 Slack 변경·운영 OAuth 앱 수정·PC 배포를 하지 않습니다.
+자세한 계약과 제한은 [slack-tools 문서](slack-tools.md#channel-purpose-and-topic)를 봅니다.
 
 ## jaix-setup 경로: 연결 코드 하나로 (관리자가 토큰을 놓는다)
 

@@ -117,6 +117,61 @@ uploaded file's id and size with `files.info`. Sharing into the channel complete
 | `delete` | `channel`, `ts` | parent `thread_ts` for a reply |
 | `send_dm` | `user`, `text` | none; opens the DM and posts in one approved call |
 | `open_dm` | `user` | none; post separately to the returned DM channel |
+| `set_purpose` | `channel`, `purpose` | none; edits the channel description |
+| `set_topic` | `channel`, `topic` | none; edits the channel topic |
+
+### Channel purpose and topic
+
+These two actions use the **human owner's user token**, not a member bot token.
+Only public/private channels (`C…`/`G…`) are supported; DMs and group DMs are
+rejected. Supply only the matching `purpose` or `topic` property, never both or
+message/file/DM arguments. The exact string must be **0–250 characters**; an
+explicit `""` deliberately clears the field. Missing/null values are not clears.
+Whitespace is preserved, not trimmed; Slack transformations fail verification.
+The topic is plain text, without formatting/linkification.
+
+Before approval, `auth.test` identifies the human and `conversations.info`
+checks the exact channel, membership and existing field. The preview shows
+the token-owner user ID, channel ID/name, existing value and exact new value.
+**Both actions always require a fresh human confirmation**, even under
+`explicit_request` with an `explicit_user_request` quote. Rejection, expiration
+or an unavailable approval bridge never mutates Slack.
+
+After `conversations.setPurpose`/`conversations.setTopic`, the response is
+validated and the exact field is fetched again with `conversations.info`.
+Only matching channel/field/value is success. Missing/malformed data, a
+concurrent change, access failure or timeout is unverified; inspect the channel
+manually, **never automatically retry**. `setPurpose` documents both an
+`ok`-only and a purpose-string response, so neither alone proves the change;
+the separate read-back is mandatory. `setTopic` must return its conversation.
+
+Slack references (limits, membership, scopes and response shapes):
+[setPurpose](https://docs.slack.dev/reference/methods/conversations.setPurpose/),
+[setTopic](https://docs.slack.dev/reference/methods/conversations.setTopic/).
+
+#### Rollout after merge: scopes are not a code update
+
+1. An administrator updates the **existing shared user OAuth app**, not each
+   member's bot app: add `channels:write.topic` and `groups:write.topic` to
+   **User Token Scopes**, preserving its callback and existing scopes. The
+   generated `oauth_app_manifest()`/`KIT_USER_SCOPES` includes them for new apps;
+   `update-all` does not update this shared app. No broad `channels:write` or
+   `groups:write` user scope is added by this feature.
+2. Each owner reauthorizes their **own** Slack account through the existing
+   JAIX “Slack 본인 권한 연결” flow. Any server-side OAuth scope configuration
+   must request those scopes too. Merely editing the manifest does not upgrade
+   already issued tokens. An administrator must not authorize on someone's behalf.
+3. After the merged kit is available in the JAIX release, update the PC with
+   `jaix update` (or install the merged `slack-tools` plugin as above), reload
+   using the normal gateway restart and start a fresh session. **`jaix update`
+   alone does not grant OAuth scopes.** Missing-scope diagnostics report the
+   method, stage and known needed scopes without exposing tokens/response bodies.
+
+The owner must already belong to the channel; no join/invite is performed.
+`channels:read`/`groups:read` are also needed for the preflight/read-back and are
+already in the shared manifest. No production manifest, token, configuration,
+gateway or other profile is changed by development/tests. This integration has
+not been exercised against live Slack, and has not been tested on Windows.
 
 Prefer `send_dm` for a new DM: its single approval preview binds the peer user
 ID and the exact body, so open + post no longer asks twice. It runs `auth.test`,
@@ -162,7 +217,8 @@ layer, not passed to the agent-neutral service or standalone CLI.
 
 Missing/empty/whitespace/non-string quotes fall back to the usual prompt (a
 schema validator may instead reject invalid types/empty strings before dispatch).
-`update`, `delete`, and standalone `open_dm` always prompt even with a quote.
+`update`, `delete`, standalone `open_dm`, `set_purpose`, and `set_topic` always
+prompt even with a quote.
 Unknown/malformed policy values fail closed before invoking the service.
 Validation, ownership/read-access preflight, exact read-back, and no-retry rules
 are unchanged. Skipping a prompt is not proof that Slack received the message;
