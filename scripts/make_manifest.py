@@ -40,6 +40,7 @@ KIT_USER_SCOPES = [
     "channels:history", "groups:history", "im:history", "mpim:history",
     "channels:read", "groups:read", "im:read", "mpim:read", "users:read",
     "files:read", "files:write", "chat:write", "im:write",
+    "channels:write.topic", "groups:write.topic",  # purpose/topic only, not full channel management
 ]
 # User scopes of the shared OAuth app (one app for everyone's own user token; slack-tools uses it).
 # Where Slack sends the member back after "Allow" (the jaix share server exchanges the code).

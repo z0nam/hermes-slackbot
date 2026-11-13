@@ -10,15 +10,19 @@ API_ERRORS = frozenset({'missing_scope', 'invalid_auth', 'not_authed', 'account_
                         'channel_not_found', 'user_not_found', 'not_in_channel', 'no_permission',
                         'access_denied', 'ratelimited', 'not_allowed_token_type', 'message_not_found',
                         'file_not_found', 'canvas_not_downloadable', 'no_user_token', 'size_mismatch',
-                        'invalid_file_size', 'login_page_instead_of_file'})
+                        'invalid_file_size', 'login_page_instead_of_file', 'is_archived', 'user_is_restricted',
+                        'too_long', 'invalid_arguments', 'method_not_supported_for_channel_type'})
 SCOPES = frozenset({'identify', 'channels:history', 'groups:history', 'im:history', 'mpim:history',
                     'channels:read', 'groups:read', 'im:read', 'mpim:read', 'im:write', 'mpim:write',
-                    'chat:write', 'search:read', 'files:read', 'files:write'})
+                    'chat:write', 'search:read', 'files:read', 'files:write',
+                    'channels:write.topic', 'groups:write.topic'})
 METHODS = frozenset({'auth.test', 'conversations.open', 'conversations.info', 'conversations.history',
                      'conversations.replies', 'search.messages', 'chat.postMessage', 'chat.update', 'chat.delete',
-                     'files.info', 'file.download', 'file.upload'})
+                     'files.info', 'file.download', 'file.upload',
+                     'conversations.setPurpose', 'conversations.setTopic'})
 MAX_UPLOAD = 1024 * 1024 * 1024
 STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
+UNSET = object()
 
 
 class ConsentError(PermissionError):
@@ -95,7 +99,57 @@ class SlackService:
             raise RuntimeError('Slack returned malformed messages; result is unverified')
         return data
 
-    def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', path='', approve=None):
+    @staticmethod
+    def _metadata_channel(info, channel, field):
+        if (not isinstance(info, dict) or info.get('id') != channel
+                or info.get('is_member') is not True or info.get('is_im') is not False
+                or info.get('is_mpim') is not False or not isinstance(info.get('name'), str)
+                or not isinstance(info.get(field), dict)
+                or not isinstance(info[field].get('value'), str)):
+            raise RuntimeError('Channel metadata/membership not verified; do not retry automatically')
+        return info
+
+    def _set_metadata(self, channel, field, value, approve):
+        if not callable(approve):
+            raise PermissionError('Explicit human confirmation required for this action')
+        auth = self._call('auth.test', stage='preflight')
+        owner = auth.get('user_id')
+        validate(owner, r'[UW][A-Z0-9]{8,}', 'token owner ID')
+        if auth.get('bot_id'):
+            raise PermissionError('Channel metadata requires a human user token')
+        before = self._metadata_channel(
+            self._call('conversations.info', stage='preflight', channel=channel).get('channel'), channel, field)
+        preview = json.dumps({'identity': 'sapi user token (acts as a human)', 'author': owner,
+                              'action': 'set_' + field, 'channel': channel, 'channel_name': before['name'],
+                              'existing_' + field: before[field]['value'], field: value}, ensure_ascii=False)
+        if approve(preview) is not True:
+            raise PermissionError('Explicit human confirmation required for this action')
+        result = self._call('conversations.set' + field.title(), stage='write', channel=channel, **{field: value})
+        # setPurpose documents both ok-only and purpose-string success responses;
+        # setTopic returns a conversation. Validate every returned target/value.
+        if 'channel' in result or field == 'topic':
+            changed = self._metadata_channel(result.get('channel'), channel, field)
+            if changed[field]['value'] != value:
+                raise RuntimeError('Metadata response mismatch; do not retry automatically')
+        if field in result and result[field] != value:
+            raise RuntimeError('Metadata response mismatch; do not retry automatically')
+        after = self._metadata_channel(
+            self._call('conversations.info', stage='verification', channel=channel).get('channel'), channel, field)
+        if after[field]['value'] != value:
+            raise RuntimeError('Metadata write not verified; do not retry automatically')
+        return {'verified': True, 'channel': channel, field: value}
+
+    def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', path='', purpose=UNSET, topic=UNSET, approve=None):
+        if action in ('set_purpose', 'set_topic'):
+            validate(channel, r'[CG][A-Z0-9]{8,}', 'channel ID')
+            field = action.removeprefix('set_')
+            value, other = (purpose, topic) if field == 'purpose' else (topic, purpose)
+            if (not isinstance(value, str) or len(value) > 250 or '\x00' in value
+                    or other is not UNSET or any(v != '' for v in (text, ts, thread_ts, user, path))):
+                raise ValueError('Metadata actions accept only channel and the matching string (0–250 characters)')
+            return self._set_metadata(channel, field, value, approve)
+        if purpose is not UNSET or topic is not UNSET:
+            raise ValueError('Only metadata actions accept purpose/topic')
         if action == 'upload_file':
             return self._upload(channel=channel, path=path, text=text, thread_ts=thread_ts, ts=ts, user=user,
                                 approve=approve)
@@ -327,7 +381,7 @@ def main():
     parser = argparse.ArgumentParser(description='Constrained Slack reads/writes through a user-token sapi. Writes need a real interactive human confirmation.')
     parser.add_argument('--sapi', default='sapi', help='Executable path or PATH name (no shell)')
     parser.add_argument('--workspace-host', action='append', default=[], help='Allowed exact workspace host for read_link')
-    parser.add_argument('operation', choices=['read_link', 'search', 'history', 'post', 'update', 'delete', 'open_dm', 'send_dm'])
+    parser.add_argument('operation', choices=['read_link', 'search', 'history', 'post', 'update', 'delete', 'open_dm', 'send_dm', 'set_purpose', 'set_topic'])
     parser.add_argument('--args', default='{}', help='JSON object of operation arguments; timestamps must be strings')
     options = parser.parse_args()
 
