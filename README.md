@@ -5,6 +5,9 @@
 
 [한국어 안내](docs/ko.md) · [Hermes에게 설치를 맡기는 프롬프트 (한국어)](docs/hermes-prompt.ko.md) · [관리자 대리 설치 (한국어)](docs/admin-provision.ko.md)
 
+[Current status, capability matrix and shared configuration contract](docs/status-and-contract.md)
+— implementation SSOT here, distribution/presets in jaix-kit; checked 2026-11-04.
+
 ## The problem
 
 Following the stock setup (`hermes slack manifest --agent-view --write`) gives every personal bot:
