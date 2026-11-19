@@ -87,3 +87,17 @@ FALLBACK_ALERT_ACCOUNT_NAMES=personal=개인,anthropic-oauth-2=회사
 ## 답변에 모델 이름 붙이기
 
 `slack-model-display`는 최종 답변의 보낸 사람 이름을 `Hermes-alice (claude-sonnet-5-5)`처럼 바꿔, 어느 모델이 답했는지 보여 줍니다. 2026-11부터 `install.py`가 기본으로 설치하고 이름 앞부분을 `Hermes-<아이디>`로 맞춥니다. 앱에 `chat:write.customize` 권한이 있어야 하며, 키트 매니페스트(`make_manifest.py`)에는 들어 있습니다. 권한을 아직 넣지 않은 앱이면 `python scripts\install.py alice --no-model-display`로 설치합니다. [상세](slack-model-display.md)
+
+## 리마인더 (봇이 정한 시각에 DM)
+
+내 Hermes 봇이 정한 시각에 나에게 DM을 보냅니다. Hermes 자체 예약(`hermes cron`)을 쓰고 LLM은 부르지 않습니다.
+
+```powershell
+python scripts\remind.py "2026-11-20T09:00" "도청에 보고서 보내기"
+python scripts\remind.py "in 30m" "회의 자료 출력"
+```
+
+- 시각은 Hermes에 설정된 시간대 기준입니다. 반복 일정은 받지 않습니다(한 번만).
+- 목록 `hermes cron list`, 취소 `hermes cron remove <id>`.
+- 그 시각에 PC와 게이트웨이가 켜져 있어야 제때 옵니다.
+- 슬랙 MCP의 예약 메시지로 내 DM에 리마인더를 보내면 'Claude' 앱을 거쳐서 "에이전트는 DM 시작 부분에만 추가할 수 있습니다" 안내가 뜹니다. 리마인더는 이 방법을 쓰세요.
