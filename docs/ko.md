@@ -100,4 +100,6 @@ python scripts\remind.py "in 30m" "회의 자료 출력"
 - 시각은 Hermes에 설정된 시간대 기준입니다. 반복 일정은 받지 않습니다(한 번만).
 - 목록 `hermes cron list`, 취소 `hermes cron remove <id>`.
 - 그 시각에 PC와 게이트웨이가 켜져 있어야 제때 옵니다.
+- 예약 확인 주기 때문에 정한 시각보다 1분쯤 늦게 올 수 있습니다.
+- 보냈는지는 `gateway.log`가 아니라 `agent.log`에 남습니다("delivered to slack:…"). `hermes cron list`에서 사라졌으면 실행된 것입니다.
 - 슬랙 MCP의 예약 메시지로 내 DM에 리마인더를 보내면 'Claude' 앱을 거쳐서 "에이전트는 DM 시작 부분에만 추가할 수 있습니다" 안내가 뜹니다. 리마인더는 이 방법을 쓰세요.
