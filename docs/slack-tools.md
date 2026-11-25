@@ -149,6 +149,15 @@ Slack references (limits, membership, scopes and response shapes):
 [setPurpose](https://docs.slack.dev/reference/methods/conversations.setPurpose/),
 [setTopic](https://docs.slack.dev/reference/methods/conversations.setTopic/).
 
+#### Channel canvases
+
+`create_channel_canvas` (channel + markdown `text` + optional `title`), `edit_canvas` (canvas `F…` + `mode`
+append/prepend/replace + `text`, optional `section_id` for replace) and the reads `channel_canvas` /
+`canvas_sections` use the owner's user token with `canvases:read`/`canvases:write`. Writes always ask the human;
+create is verified by re-reading `conversations.info` `properties.canvas.file_id`, edit by `files.info` `updated`.
+Rollout is the same as below: add both scopes to the shared OAuth app's User Token Scopes and the JAIX server
+scope list, then each owner re-authorizes ("JAIX 슬랙 권한 갱신").
+
 #### Rollout after merge: scopes are not a code update
 
 1. An administrator updates the **existing shared user OAuth app**, not each

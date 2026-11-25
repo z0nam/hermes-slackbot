@@ -11,18 +11,30 @@ API_ERRORS = frozenset({'missing_scope', 'invalid_auth', 'not_authed', 'account_
                         'access_denied', 'ratelimited', 'not_allowed_token_type', 'message_not_found',
                         'file_not_found', 'canvas_not_downloadable', 'no_user_token', 'size_mismatch',
                         'invalid_file_size', 'login_page_instead_of_file', 'is_archived', 'user_is_restricted',
-                        'too_long', 'invalid_arguments', 'method_not_supported_for_channel_type'})
+                        'too_long', 'invalid_arguments', 'method_not_supported_for_channel_type',
+                        'channel_canvas_already_exists', 'channel_canvas_creation_failed', 'canvas_not_found',
+                        'canvas_editing_failed', 'canvas_disabled_user_team', 'not_allowed'})
 SCOPES = frozenset({'identify', 'channels:history', 'groups:history', 'im:history', 'mpim:history',
                     'channels:read', 'groups:read', 'im:read', 'mpim:read', 'im:write', 'mpim:write',
                     'chat:write', 'search:read', 'files:read', 'files:write',
-                    'channels:write.topic', 'groups:write.topic'})
+                    'channels:write.topic', 'groups:write.topic', 'canvases:read', 'canvases:write'})
 METHODS = frozenset({'auth.test', 'conversations.open', 'conversations.info', 'conversations.history',
                      'conversations.replies', 'search.messages', 'chat.postMessage', 'chat.update', 'chat.delete',
                      'files.info', 'file.download', 'file.upload',
-                     'conversations.setPurpose', 'conversations.setTopic'})
+                     'conversations.setPurpose', 'conversations.setTopic',
+                     'conversations.canvases.create', 'canvases.edit', 'canvases.sections.lookup'})
+# Slack allows 1 MiB per change, but sapi takes params as argv and Windows caps a whole command line at
+# 32,767 UTF-16 units (CreateProcessW). Keep each call well under it; longer documents go in several appends.
+MAX_CANVAS = 20000
+CANVAS_EDITS = {'append': 'insert_at_end', 'prepend': 'insert_at_start', 'replace': 'replace'}
 MAX_UPLOAD = 1024 * 1024 * 1024
 STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
 UNSET = object()
+# Shown to the member verbatim when their own Slack permission is missing or too old (Hermes says it in Slack).
+CONNECT_FIX = ("이 PC 에서 슬랙 본인 권한이 아직 연결되지 않았습니다. 시작 메뉴 'JAIX 슬랙 권한 갱신'"
+               "(또는 명령창 `jaix hermes slack-access`)을 한 번 실행해 브라우저에서 [허용]을 누르세요.")
+SCOPE_FIX = ("이 기능에 필요한 슬랙 본인 권한이 아직 없습니다. 시작 메뉴 'JAIX 슬랙 권한 갱신'"
+             "(또는 명령창 `jaix hermes slack-access`)을 한 번 실행해 브라우저에서 [허용]을 누르세요.")
 
 
 class ConsentError(PermissionError):
@@ -54,6 +66,9 @@ def failure(exc):
     out = {'success': False, 'error': 'Slack request failed or is unverified. Never automatically retry writes; inspect target first. Details suppressed.'}
     if isinstance(exc, SlackRequestError):
         out.update(exc.details)
+        fix = {'no_user_token': CONNECT_FIX, 'missing_scope': SCOPE_FIX}.get(exc.details.get('code'))
+        if fix:
+            out['user_message'] = fix
     elif isinstance(exc, ConsentError) and exc.reason in ('declined', 'expired', 'unavailable'):
         out.update(code='consent_' + exc.reason, stage='preflight')
     elif isinstance(exc, PermissionError):
@@ -143,7 +158,8 @@ class SlackService:
             raise RuntimeError('Metadata write not verified; do not retry automatically')
         return {'verified': True, 'channel': channel, field: value}
 
-    def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', path='', purpose=UNSET, topic=UNSET, approve=None):
+    def write(self, action, *, channel='', text='', ts='', thread_ts='', user='', path='', purpose=UNSET, topic=UNSET,
+              canvas='', title='', mode='', section_id='', approve=None):
         if action in ('set_purpose', 'set_topic'):
             validate(channel, r'[CG][A-Z0-9]{8,}', 'channel ID')
             field = action.removeprefix('set_')
@@ -154,6 +170,13 @@ class SlackService:
             return self._set_metadata(channel, field, value, approve)
         if purpose is not UNSET or topic is not UNSET:
             raise ValueError('Only metadata actions accept purpose/topic')
+        if action in ('create_channel_canvas', 'edit_canvas'):
+            if ts or thread_ts or user or path:
+                raise ValueError('Canvas actions accept channel or canvas, text (markdown), title, mode and section_id')
+            return self._canvas_write(action, channel=channel, canvas=canvas, text=text, title=title, mode=mode,
+                                      section_id=section_id, approve=approve)
+        if canvas or title or mode or section_id:
+            raise ValueError('Only canvas actions accept canvas/title/mode/section_id')
         if action == 'upload_file':
             return self._upload(channel=channel, path=path, text=text, thread_ts=thread_ts, ts=ts, user=user,
                                 approve=approve)
@@ -236,6 +259,112 @@ class SlackService:
         if (action == 'delete' and message is not None) or (action != 'delete' and (not message or message.get('text') != text)):
             raise RuntimeError('Write not verified; do not retry automatically')
         return {'verified': True, 'channel': channel, 'ts': sent_ts, 'message': message}
+
+    def _human(self):
+        auth = self._call('auth.test', stage='preflight')
+        owner = auth.get('user_id')
+        validate(owner, r'[UW][A-Z0-9]{8,}', 'token owner ID')
+        if auth.get('bot_id'):
+            raise PermissionError('Canvas actions require a human user token')
+        return owner
+
+    def _channel_canvas_id(self, channel, *, stage):
+        info = self._call('conversations.info', stage=stage, channel=channel).get('channel')
+        if (not isinstance(info, dict) or info.get('id') != channel or info.get('is_im') is not False
+                or info.get('is_mpim') is not False or not isinstance(info.get('name'), str)):
+            raise RuntimeError('Channel not verified; do not retry automatically')
+        canvas = ((info.get('properties') or {}).get('canvas') or {}).get('file_id')
+        return info, canvas if isinstance(canvas, str) and re.fullmatch(r'F[A-Z0-9]{8,}', canvas) else None
+
+    def _canvas_info(self, canvas, *, stage):
+        info = self._call('files.info', stage=stage, file=canvas).get('file')
+        if not isinstance(info, dict) or info.get('id') != canvas or info.get('filetype') != 'quip':
+            raise RuntimeError('Canvas not verified; do not retry automatically')
+        return info
+
+    def _canvas_write(self, action, *, channel, canvas, text, title, mode, section_id, approve):
+        if not isinstance(text, str) or len(text) > MAX_CANVAS or '\x00' in text:
+            raise ValueError('Canvas markdown must be at most 20000 characters per call; add the rest with edit_canvas append')
+        if not isinstance(title, str) or len(title) > 255 or '\n' in title:
+            raise ValueError('Canvas title must be one line of at most 255 characters')
+        content = json.dumps({'type': 'markdown', 'markdown': text}, ensure_ascii=False)
+        if len(content) > MAX_CANVAS + 2000:  # escaped newlines/quotes grow the JSON; refuse before any call
+            raise ValueError('Canvas markdown too long for one call; split it and add the rest with edit_canvas append')
+        if action == 'create_channel_canvas':
+            validate(channel, r'[CG][A-Z0-9]{8,}', 'channel ID')
+            if canvas or mode or section_id or not text.strip():
+                raise ValueError('create_channel_canvas accepts channel, text (markdown) and optional title')
+        else:
+            validate(canvas, r'F[A-Z0-9]{8,}', 'canvas ID')
+            if channel or title or mode not in CANVAS_EDITS:
+                raise ValueError('edit_canvas accepts canvas, mode (append, prepend, replace), text and section_id')
+            if section_id:
+                validate(section_id, r'temp:C:[A-Za-z0-9]{10,}', 'section ID')
+                if mode != 'replace':
+                    raise ValueError('section_id is only for mode=replace')
+            if mode != 'replace' and not text.strip():
+                raise ValueError('append/prepend need markdown text')
+        if not callable(approve):
+            raise PermissionError('Explicit human confirmation required for this action')
+        owner = self._human()
+        if action == 'create_channel_canvas':
+            info, existing = self._channel_canvas_id(channel, stage='preflight')
+            if existing:
+                raise ValueError('This channel already has a canvas (' + existing + '); use edit_canvas on it')
+            preview = {'identity': 'sapi user token (creates as a human)', 'author': owner,
+                       'action': action, 'channel': channel, 'channel_name': info['name'],
+                       'title': title, 'markdown': text}
+        else:
+            before = self._canvas_info(canvas, stage='preflight')
+            preview = {'identity': 'sapi user token (edits as a human)', 'author': owner, 'action': action,
+                       'canvas': canvas, 'canvas_title': before.get('title', ''), 'mode': mode,
+                       'section_id': section_id or ('whole canvas' if mode == 'replace' else ''), 'markdown': text}
+        if approve(json.dumps(preview, ensure_ascii=False)) is not True:
+            raise PermissionError('Explicit human confirmation required for this action')
+        if action == 'create_channel_canvas':
+            params = {'channel_id': channel, 'document_content': content}
+            if title:
+                params['title'] = title
+            created = self._call('conversations.canvases.create', stage='write', **params).get('canvas_id')
+            if not isinstance(created, str) or not re.fullmatch(r'F[A-Z0-9]{8,}', created):
+                raise RuntimeError('Canvas outcome ambiguous; do not retry automatically')
+            if self._channel_canvas_id(channel, stage='verification')[1] != created:
+                raise RuntimeError('Channel canvas not verified; do not retry automatically')
+            return {'verified': True, 'channel': channel, 'canvas': created}
+        change = {'operation': CANVAS_EDITS[mode], 'document_content': json.loads(content)}
+        if section_id:
+            change['section_id'] = section_id
+        self._call('canvases.edit', stage='write', canvas_id=canvas,
+                   changes=json.dumps([change], ensure_ascii=False))
+        after = self._canvas_info(canvas, stage='verification')
+        if not isinstance(after.get('updated'), int) or after['updated'] < (before.get('updated') or 0):
+            raise RuntimeError('Canvas edit not verified; do not retry automatically')
+        return {'verified': True, 'canvas': canvas, 'mode': mode}
+
+    def channel_canvas(self, channel):
+        validate(channel, r'[CG][A-Z0-9]{8,}', 'channel ID')
+        info, canvas = self._channel_canvas_id(channel, stage='request')
+        return {'channel': channel, 'channel_name': info['name'], 'canvas': canvas}
+
+    def canvas_sections(self, canvas, contains_text='', section_types=()):
+        validate(canvas, r'F[A-Z0-9]{8,}', 'canvas ID')
+        criteria = {}
+        if contains_text:
+            if not isinstance(contains_text, str) or len(contains_text) > 1000:
+                raise ValueError('contains_text must be at most 1000 characters')
+            criteria['contains_text'] = contains_text
+        if section_types:
+            if (not isinstance(section_types, (list, tuple))
+                    or not set(section_types) <= {'any_header', 'h1', 'h2', 'h3'}):
+                raise ValueError('section_types: any_header, h1, h2, h3')
+            criteria['section_types'] = list(section_types)
+        if not criteria:
+            raise ValueError('Give contains_text or section_types')
+        data = self._call('canvases.sections.lookup', canvas_id=canvas,
+                          criteria=json.dumps(criteria, ensure_ascii=False))
+        sections = data.get('sections')
+        return {'canvas': canvas, 'sections': [x.get('id') for x in sections if isinstance(x, dict)]
+                if isinstance(sections, list) else []}
 
     def _upload(self, *, channel, path, text, thread_ts, ts, user, approve):
         validate(channel, r'[CGD][A-Z0-9]{8,}', 'channel ID')
@@ -385,7 +514,9 @@ def main():
     parser = argparse.ArgumentParser(description='Constrained Slack reads/writes through a user-token sapi. Writes need a real interactive human confirmation.')
     parser.add_argument('--sapi', default='sapi', help='Executable path or PATH name (no shell)')
     parser.add_argument('--workspace-host', action='append', default=[], help='Allowed exact workspace host for read_link')
-    parser.add_argument('operation', choices=['read_link', 'search', 'history', 'post', 'update', 'delete', 'open_dm', 'send_dm', 'set_purpose', 'set_topic'])
+    parser.add_argument('operation', choices=['read_link', 'search', 'history', 'channel_canvas', 'canvas_sections',
+                                              'post', 'update', 'delete', 'open_dm', 'send_dm', 'set_purpose', 'set_topic',
+                                              'create_channel_canvas', 'edit_canvas'])
     parser.add_argument('--args', default='{}', help='JSON object of operation arguments; timestamps must be strings')
     options = parser.parse_args()
 
@@ -401,7 +532,7 @@ def main():
         if not isinstance(args, dict):
             raise ValueError('Arguments must be an object')
         client = SlackService(options.sapi, options.workspace_host)
-        if options.operation in ('read_link', 'search', 'history'):
+        if options.operation in ('read_link', 'search', 'history', 'channel_canvas', 'canvas_sections'):
             data = getattr(client, options.operation)(**args)
         else:
             data = client.write(options.operation, **args, approve=consent)
