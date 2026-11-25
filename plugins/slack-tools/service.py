@@ -30,6 +30,11 @@ CANVAS_EDITS = {'append': 'insert_at_end', 'prepend': 'insert_at_start', 'replac
 MAX_UPLOAD = 1024 * 1024 * 1024
 STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
 UNSET = object()
+# Shown to the member verbatim when their own Slack permission is missing or too old (Hermes says it in Slack).
+CONNECT_FIX = ("이 PC 에서 슬랙 본인 권한이 아직 연결되지 않았습니다. 시작 메뉴 'JAIX 슬랙 권한 갱신'"
+               "(또는 명령창 `jaix hermes slack-access`)을 한 번 실행해 브라우저에서 [허용]을 누르세요.")
+SCOPE_FIX = ("이 기능에 필요한 슬랙 본인 권한이 아직 없습니다. 시작 메뉴 'JAIX 슬랙 권한 갱신'"
+             "(또는 명령창 `jaix hermes slack-access`)을 한 번 실행해 브라우저에서 [허용]을 누르세요.")
 
 
 class ConsentError(PermissionError):
@@ -61,6 +66,9 @@ def failure(exc):
     out = {'success': False, 'error': 'Slack request failed or is unverified. Never automatically retry writes; inspect target first. Details suppressed.'}
     if isinstance(exc, SlackRequestError):
         out.update(exc.details)
+        fix = {'no_user_token': CONNECT_FIX, 'missing_scope': SCOPE_FIX}.get(exc.details.get('code'))
+        if fix:
+            out['user_message'] = fix
     elif isinstance(exc, ConsentError) and exc.reason in ('declined', 'expired', 'unavailable'):
         out.update(code='consent_' + exc.reason, stage='preflight')
     elif isinstance(exc, PermissionError):

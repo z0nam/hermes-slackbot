@@ -118,5 +118,24 @@ class Canvas(unittest.TestCase):
                                                'write').details['code'], 'channel_canvas_already_exists')
 
 
+    def test_missing_user_token_or_scope_tells_member_how_to_connect(self):
+        svc = test_slack_tools.service()
+        out = svc.failure(svc.SlackRequestError({'error': 'no_user_token'}, 'auth.test', 'preflight'))
+        self.assertEqual(out['code'], 'no_user_token')
+        self.assertIn('JAIX 슬랙 권한 갱신', out['user_message'])
+        self.assertIn('jaix hermes slack-access', out['user_message'])
+        out = svc.failure(svc.SlackRequestError({'error': 'missing_scope', 'needed': 'canvases:write'},
+                                                'conversations.canvases.create', 'write'))
+        self.assertIn('JAIX 슬랙 권한 갱신', out['user_message'])
+        self.assertNotIn('user_message', svc.failure(svc.SlackRequestError({'error': 'channel_not_found'}, 'auth.test', 'request')))
+        client = self.fixture.client([{'ok': False, 'error': 'no_user_token'}])  # sapi without a token, end to end
+        mod = type(client).__init__.__globals__  # each client() loads its own copy of the service module
+        with self.assertRaises(mod['SlackRequestError']) as e:
+            client.channel_canvas(CHANNEL)
+        self.assertIn('[허용]', mod['failure'](e.exception)['user_message'])
+        init = (test_slack_tools.ROOT / 'plugins/slack-tools/__init__.py').read_text(encoding='utf-8')
+        self.assertEqual(init.count('user_message'), 2)  # read and write tool descriptions
+
+
 if __name__ == '__main__':
     unittest.main()
