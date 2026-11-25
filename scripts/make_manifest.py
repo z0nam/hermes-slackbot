@@ -41,6 +41,7 @@ KIT_USER_SCOPES = [
     "channels:read", "groups:read", "im:read", "mpim:read", "users:read",
     "files:read", "files:write", "chat:write", "im:write",
     "channels:write.topic", "groups:write.topic",  # purpose/topic only, not full channel management
+    "canvases:read", "canvases:write",  # slack-tools channel canvas create/edit, as the member (asks per call)
 ]
 # User scopes of the shared OAuth app (one app for everyone's own user token; slack-tools uses it).
 # Where Slack sends the member back after "Allow" (the jaix share server exchanges the code).

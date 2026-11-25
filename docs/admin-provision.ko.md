@@ -141,6 +141,17 @@ python3 scripts/provision_app.py rename <옛 아이디> <새 아이디>
 - 흐름: jaix에서 "Slack 본인 권한 연결" → 브라우저에서 구성원이 **허용** → jaix 서버(원내망)가 토큰으로 바꿔 1회용으로 PC에 전달 → `setup_pc.py <아이디> --user U… --secrets-file f.json`(`user_token`만 든 파일) → `SLACK_USER_TOKEN` 저장, `slack-tools` 설치·설정, 게이트웨이 재시작.
 - 끄기: 구성원 PC에서 `hermes plugins disable slack-tools` 후 게이트웨이 재시작. 토큰 폐기는 구성원 본인이 Slack에서 공용 앱 연결을 해제하면 됩니다. 공용 앱의 *Revoke Tokens*는 **모든 구성원의** user token을 한꺼번에 폐기하므로 한 사람만 끊을 때는 쓰지 않습니다.
 
+### 채널 캔버스 권한 갱신 (병합 후 별도 적용)
+
+`slack-tools`의 채널 캔버스 만들기(`create_channel_canvas`)·고치기(`edit_canvas`)와 찾기(`channel_canvas`·`canvas_sections`)도
+**사용자 토큰**으로 작동합니다. 적용 절차는 아래 설명·주제 권한과 같습니다.
+
+1. 기존 공용 OAuth 앱의 **User Token Scopes**에 `canvases:read`·`canvases:write`를 추가합니다(기존 범위·콜백 보존). 봇 앱 32개는 건드리지 않습니다.
+2. JAIX 서버(ji-gw-ai `slack_oauth.py` `USER_SCOPES`, 또는 deploy.toml `[slack] user_scopes`)에도 같은 두 범위를 넣습니다.
+3. 구성원은 시작 메뉴 **JAIX 슬랙 권한 갱신**(`jaix hermes slack-access`)으로 본인이 다시 허용합니다. jaix 가 빠진 범위를 보면 업데이트 때 이걸 권합니다.
+
+캔버스 쓰기는 매번 사람 승인을 받고(본인 명의로 만들어짐), 만든 뒤 채널 정보의 캔버스 ID를 다시 읽어 확인합니다.
+
 ### 채널 설명·주제 편집 권한 갱신 (병합 후 별도 적용)
 
 `slack-tools`의 `set_purpose`(설명)·`set_topic`(주제)은 **사용자 토큰**으로 작동합니다.
