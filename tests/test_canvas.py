@@ -91,6 +91,9 @@ class Canvas(unittest.TestCase):
                 client.write('edit_canvas', approve=lambda p: True, **kwargs)
         with self.assertRaises(ValueError):
             client.write('post', channel=CHANNEL, text='x', canvas=CANVAS, approve=lambda p: True)
+        for text in ('가' * 20001, '"\n' * 9000):  # too long, or too long once JSON-escaped: refused before any call
+            with self.assertRaises(ValueError):
+                client.write('create_channel_canvas', channel=CHANNEL, text=text, approve=lambda p: True)
         self.assertFalse(self.fixture.log.exists())
 
     def test_reads_channel_canvas_and_sections(self):

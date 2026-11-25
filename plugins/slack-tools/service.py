@@ -23,7 +23,9 @@ METHODS = frozenset({'auth.test', 'conversations.open', 'conversations.info', 'c
                      'files.info', 'file.download', 'file.upload',
                      'conversations.setPurpose', 'conversations.setTopic',
                      'conversations.canvases.create', 'canvases.edit', 'canvases.sections.lookup'})
-MAX_CANVAS = 1024 * 1024  # Slack: markdown per change is limited to 1 MiB
+# Slack allows 1 MiB per change, but sapi takes params as argv and Windows caps a whole command line at
+# 32,767 UTF-16 units (CreateProcessW). Keep each call well under it; longer documents go in several appends.
+MAX_CANVAS = 20000
 CANVAS_EDITS = {'append': 'insert_at_end', 'prepend': 'insert_at_start', 'replace': 'replace'}
 MAX_UPLOAD = 1024 * 1024 * 1024
 STAGES = frozenset({'request', 'preflight', 'write', 'verification'})
@@ -274,9 +276,12 @@ class SlackService:
 
     def _canvas_write(self, action, *, channel, canvas, text, title, mode, section_id, approve):
         if not isinstance(text, str) or len(text) > MAX_CANVAS or '\x00' in text:
-            raise ValueError('Canvas markdown must be at most 1 MiB')
+            raise ValueError('Canvas markdown must be at most 20000 characters per call; add the rest with edit_canvas append')
         if not isinstance(title, str) or len(title) > 255 or '\n' in title:
             raise ValueError('Canvas title must be one line of at most 255 characters')
+        content = json.dumps({'type': 'markdown', 'markdown': text}, ensure_ascii=False)
+        if len(content) > MAX_CANVAS + 2000:  # escaped newlines/quotes grow the JSON; refuse before any call
+            raise ValueError('Canvas markdown too long for one call; split it and add the rest with edit_canvas append')
         if action == 'create_channel_canvas':
             validate(channel, r'[CG][A-Z0-9]{8,}', 'channel ID')
             if canvas or mode or section_id or not text.strip():
@@ -308,7 +313,6 @@ class SlackService:
                        'section_id': section_id or ('whole canvas' if mode == 'replace' else ''), 'markdown': text}
         if approve(json.dumps(preview, ensure_ascii=False)) is not True:
             raise PermissionError('Explicit human confirmation required for this action')
-        content = json.dumps({'type': 'markdown', 'markdown': text}, ensure_ascii=False)
         if action == 'create_channel_canvas':
             params = {'channel_id': channel, 'document_content': content}
             if title:
